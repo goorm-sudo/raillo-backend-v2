@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: raillo-application
+  namespace: backend
+spec:
+  revisionHistoryLimit: 1
+  replicas: 1
+  selector:
+    matchLabels:
+      app: raillo-application
+  template:
+    metadata:
+      labels:
+        app: raillo-application
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: raillo-application
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: raillo-application
+      containers:
+        - name: raillo-application
+          image: 052104148083.dkr.ecr.ap-northeast-2.amazonaws.com/raillo-backend:latest
+          ports:
+            - containerPort: 8080  # spring의 포트번호와 일치
+          resources:
+            # 컨테이너가 사용할수 있는 리소스의 최대치
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+            # 컨테이너가 시작될떄 보장받아야 하는 최소 자원
+            requests:
+              cpu: "0.5"
+              memory: "512Mi"
+          envFrom:
+            - configMapRef:
+                name: raillo-config
+            - secretRef:
+                name: raillo-secrets
+          # 컨테이너 상태 확인을 통해 롤링업데이트 최적화
+          readinessProbe:
+            httpGet:
+              # healthcheck 경로
+              path: /health
+              port: 8080
+            # 컨테이너 시작 후 지연
+            initialDelaySeconds: 10
+            # 확인 반복 주기
+            periodSeconds: 10

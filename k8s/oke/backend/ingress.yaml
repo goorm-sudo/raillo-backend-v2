@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: backend-ingress
+  namespace: backend
+  annotations:
+    cert-manager.io/cluster-issuer: raillo-issuer
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - server.raillo.site
+      secretName: server-raillo-site-tls
+  rules:
+    - host: server.raillo.site
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: backend-service
+                port:
+                  number: 80

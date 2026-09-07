@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: monitoring-server-ingress
+  namespace: monitoring
+  annotations:
+    cert-manager.io/cluster-issuer: raillo-issuer
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - monitoring.raillo.store
+      secretName: monitoring-raillo-site-tls
+  rules:
+    - host: monitoring.raillo.site
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: grafana
+                port:
+                  number: 3000
