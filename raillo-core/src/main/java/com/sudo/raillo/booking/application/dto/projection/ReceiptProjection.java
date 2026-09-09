@@ -2,7 +2,7 @@ package com.sudo.raillo.booking.application.dto.projection;
 
 import com.querydsl.core.annotations.QueryProjection;
 import com.sudo.raillo.booking.domain.type.PassengerType;
-import com.sudo.raillo.payment.domain.type.PaymentMethod;
+import com.sudo.raillo.payment.domain.PaymentMethod;
 import com.sudo.raillo.train.domain.type.CarType;
 import java.math.BigDecimal;
 import java.time.LocalDate;

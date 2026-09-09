@@ -11,9 +11,9 @@ import org.junit.jupiter.api.Test;
 import com.sudo.raillo.common.exception.DomainException;
 import com.sudo.raillo.member.domain.Member;
 import com.sudo.raillo.order.domain.Order;
-import com.sudo.raillo.payment.domain.status.PaymentStatus;
-import com.sudo.raillo.payment.domain.type.PaymentMethod;
-import com.sudo.raillo.payment.exception.PaymentError;
+import com.sudo.raillo.payment.domain.PaymentStatus;
+import com.sudo.raillo.payment.domain.PaymentMethod;
+import com.sudo.raillo.payment.domain.exception.PaymentError;
 import com.sudo.raillo.support.fixture.MemberFixture;
 import com.sudo.raillo.support.fixture.OrderFixture;
 

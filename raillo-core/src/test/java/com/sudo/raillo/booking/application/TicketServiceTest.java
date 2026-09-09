@@ -14,8 +14,8 @@ import com.sudo.raillo.member.domain.Member;
 import com.sudo.raillo.member.exception.MemberError;
 import com.sudo.raillo.member.infrastructure.MemberRepository;
 import com.sudo.raillo.payment.domain.Payment;
-import com.sudo.raillo.payment.domain.type.PaymentMethod;
-import com.sudo.raillo.payment.infrastructure.PaymentRepository;
+import com.sudo.raillo.payment.domain.PaymentMethod;
+import com.sudo.raillo.payment.adapter.persistence.PaymentJpaRepository;
 import com.sudo.raillo.support.annotation.ServiceTest;
 import com.sudo.raillo.support.fixture.MemberFixture;
 import com.sudo.raillo.support.fixture.PaymentFixture;
@@ -46,7 +46,7 @@ class TicketServiceTest {
 	private TicketRepository ticketRepository;
 
 	@Autowired
-	private PaymentRepository paymentRepository;
+	private PaymentJpaRepository paymentRepository;
 
 	@Autowired
 	private TicketService ticketService;

@@ -101,6 +101,8 @@ public enum BookingError implements ErrorCode {
 
 **Repository Pattern** — 기본 CRUD는 `JpaRepository`. 복잡한 쿼리는 `*QueryRepository` + `JPAQueryFactory` (QueryDSL projection). 둘 다 `{domain}/infrastructure/` 직속에 둔다 (별도 `repository/` 하위 디렉터리 두지 않음).
 
+> **헥사고날 전환 도메인 예외**: `application/required/{Domain}Repository` port가 있는 도메인(현재 `payment`)에서는 "Repository" 이름을 port에 예약한다. QueryDSL projection 구현체는 `*QueryDao`로 두고 `adapter/persistence/`에 둔다 (Repository ≠ 쿼리 실행자). Spring Data 인터페이스는 `*JpaRepository`로 유지.
+
 **Redis Repository Pattern** — `RedisTemplate<String, Object>`, TTL은 `@Value`로 주입. 커서 순회는 `ScanOptions`.
 
 **Redis Lua Scripts** — 좌석 동시 선점 충돌 방지. 스크립트는 `raillo-core/src/main/resources/scripts/`:

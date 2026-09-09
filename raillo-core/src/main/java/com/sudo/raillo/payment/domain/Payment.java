@@ -8,9 +8,7 @@ import org.hibernate.annotations.Comment;
 import com.sudo.raillo.common.exception.DomainException;
 import com.sudo.raillo.member.domain.Member;
 import com.sudo.raillo.order.domain.Order;
-import com.sudo.raillo.payment.domain.status.PaymentStatus;
-import com.sudo.raillo.payment.domain.type.PaymentMethod;
-import com.sudo.raillo.payment.exception.PaymentError;
+import com.sudo.raillo.payment.domain.exception.PaymentError;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.ConstraintMode;

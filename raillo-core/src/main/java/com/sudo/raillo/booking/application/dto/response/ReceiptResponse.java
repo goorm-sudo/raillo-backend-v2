@@ -1,7 +1,7 @@
 package com.sudo.raillo.booking.application.dto.response;
 
 import com.sudo.raillo.booking.domain.type.PassengerType;
-import com.sudo.raillo.payment.domain.type.PaymentMethod;
+import com.sudo.raillo.payment.domain.PaymentMethod;
 import com.sudo.raillo.train.domain.type.CarType;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.math.BigDecimal;
