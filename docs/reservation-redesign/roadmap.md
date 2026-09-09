@@ -35,7 +35,7 @@
 
 ## 1. 도메인 모델 정리
 
-- [ ] Reservation·SeatReservation·ReservationStatus 정의.
+- [x] Reservation·SeatReservation·ReservationStatus 정의.
 - [ ] expiresAt·정차 순서·운임 버전·주문·승인 시도·version/generation 추가.
 - [ ] 좌석 목록 불변성·구간·금액·상태 불변식 구현.
 - [ ] Booking·SeatBooking·Ticket에 주문 원본 식별·중복 생성 방지 연결 설계.
@@ -47,7 +47,7 @@
 
 - [ ] 핵심 키 5개와 기준정보 4개의 KeyGenerator 구현.
 - [ ] 같은 운행 일정의 모든 Lua 키에 같은 hash tag 적용.
-- [ ] TIME·UTC epoch ms·정확한 금액 표현·schemaVersion 결정.
+- [x] TIME·UTC epoch ms·정확한 금액 표현·schemaVersion 결정.
 - [ ] meta/stops/seats/fares 적재와 버전 일관성, READY 게시 구현.
 - [ ] 운행별 Worker 등록·탐색 누락 보정 경로 구현.
 - [ ] 확정 예매와 미완료 결제 점유 복원 기능의 입력 계약 정의.
@@ -57,12 +57,14 @@
 
 ## 3. 예약 생성
 
-- [ ] 생성 Command·응답·소유자·중복 좌석·승객 검증.
-- [ ] Redis 기준정보를 입력받는 서버 운임 계산.
-- [ ] create_reservation.lua와 Repository·Service·Facade 구현.
-- [ ] 전체 구간 선검증 후 4개 핵심 키 저장.
-- [ ] 멱등성·만료 점유 재사용·부분 쓰기 오류 탐지 구현.
-- [ ] 실제 Redis의 동시 요청·중복 요청·구간 경합 검증.
+- [x] 생성 Command·응답·소유자·중복 좌석·승객 검증.
+- [x] Redis 기준정보를 입력받는 서버 운임 계산.
+- [x] create_reservation.lua와 Repository·Service·Facade 구현.
+- [x] 전체 구간 선검증 후 4개 핵심 키 저장.
+- [x] 멱등성·만료 점유 재사용·부분 쓰기 오류 탐지 구현.
+- [x] 실제 Redis의 동시 요청·중복 요청·구간 경합 검증.
+
+2026-09-09: 준비된 기준정보를 사용하는 생성 경로를 구현·격리 검증했다. 기준정보 적재·복구, 전체 빌드 복구와 기존 연동은 미완료다. [구현 현황과 테스트 실행](18-reservation-create-implementation.md)
 
 완료 기준: DB 없는 정상 생성 경로, 비즈니스 충돌 시 부분 점유 없음, 재시도에 새 예약이나 TTL 연장 없음. [예약 생성](04-reservation-create.md)
 

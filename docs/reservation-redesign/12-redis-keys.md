@@ -1,6 +1,6 @@
 # Redis 키와 보존 전략
 
-> 구현 예정 설계다. 키 이름은 새 구조의 제안 계약이며 기존 TTL Hold 키와 호환된다고 가정하지 않는다.
+> 전체 키 설계다. 예약 생성에 쓰는 8개 키의 읽기·쓰기 계약은 [구현 현황](18-reservation-create-implementation.md)에 반영했다. 후속 Worker·결제 키는 구현 예정이며 기존 TTL Hold 키와 호환되지 않는다.
 
 [문서 목록](./README.md) · [로드맵](./roadmap.md) · [다음: Lua 스크립트](./13-lua-scripts.md)
 
@@ -97,6 +97,8 @@ Redis 7.4는 `HEXPIRE`로 HASH 필드별 만료를 지원한다. 따라서 HASH�
 | `fares` | HASH | 구간·등급별 운임 기준 |
 
 `meta.status`는 `LOADING/READY/RECOVERING/CLOSED`다. 신규 예약은 `READY`에서만 허용한다. 기준정보 적재·갱신은 버전과 함께 일관되게 게시하며 중간 상태의 예약을 차단한다.
+
+현재 생성 구현은 확정·진행 중 점유의 적재 완료 확인값인 `meta.inventoryReady=1`도 요구한다. 멱등성 기록에는 부분 쓰기 감지를 위한 `completed` 필드를 저장한다. 금액과 JSON 안의 ID는 Redis에서 문자열로 보관한다.
 
 버전은 기준정보 변경을, `generation`은 점유를 포함한 재구축 세대를 식별한다. 복구 세대와 다른 오래된 작업을 단순 적용하지 않고 DB 상태와 재대조한다.
 

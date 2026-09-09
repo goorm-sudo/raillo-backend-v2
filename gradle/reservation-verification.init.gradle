@@ -1,0 +1,57 @@
+// 구 Booking 참조가 정리될 때까지 새 예약 생성만 검증하는 별도 source set.
+// 기본 build/test의 소스나 실패를 숨기지 않는다.
+// ./gradlew -I gradle/reservation-verification.init.gradle :raillo-core:reservationTest
+gradle.projectsEvaluated {
+    def core = gradle.rootProject.project(':raillo-core')
+    core.configure(core) {
+        sourceSets {
+            reservationVerification {
+                java {
+                    srcDir 'src/main/java'
+                    include 'com/sudo/raillo/booking/application/**'
+                    include 'com/sudo/raillo/booking/infrastructure/**'
+                    include 'com/sudo/raillo/booking/presentation/ReservationController.java'
+                    include 'com/sudo/raillo/booking/docs/ReservationControllerDoc.java'
+                    include 'com/sudo/raillo/booking/domain/Reservation.java'
+                    include 'com/sudo/raillo/booking/domain/SeatReservation.java'
+                    include 'com/sudo/raillo/booking/domain/type/PassengerType.java'
+                    include 'com/sudo/raillo/booking/domain/status/ReservationStatus.java'
+                    include 'com/sudo/raillo/booking/exception/BookingError.java'
+                    include 'com/sudo/raillo/booking/success/BookingSuccess.java'
+                    include 'com/sudo/raillo/booking/util/ReservationIdGenerator.java'
+                    include 'com/sudo/raillo/train/domain/type/CarType.java'
+                }
+                resources.srcDir 'src/main/resources'
+            }
+            reservationVerificationTest {
+                java {
+                    srcDir 'src/test/java'
+                    include 'com/sudo/raillo/booking/application/service/ReservationServiceTest.java'
+                    include 'com/sudo/raillo/booking/application/calculator/ReservationFareCalculatorTest.java'
+                    include 'com/sudo/raillo/booking/support/**'
+                    include 'com/sudo/raillo/support/annotation/ServiceTest.java'
+                    include 'com/sudo/raillo/support/container/TestContainerInitializer.java'
+                    include 'com/sudo/raillo/support/extension/**'
+                }
+                resources.srcDir 'src/test/resources'
+                compileClasspath += sourceSets.reservationVerification.output
+                runtimeClasspath += sourceSets.reservationVerification.output
+            }
+        }
+        configurations {
+            reservationVerificationImplementation.extendsFrom implementation
+            reservationVerificationRuntimeOnly.extendsFrom runtimeOnly
+            reservationVerificationCompileOnly.extendsFrom compileOnly
+            reservationVerificationAnnotationProcessor.extendsFrom annotationProcessor
+            reservationVerificationTestImplementation.extendsFrom testImplementation, implementation
+            reservationVerificationTestRuntimeOnly.extendsFrom testRuntimeOnly, runtimeOnly
+        }
+        tasks.register('reservationTest', Test) {
+            description = '구 Booking 참조와 분리하여 새 예약 생성 코드를 검증합니다.'
+            group = 'verification'
+            testClassesDirs = sourceSets.reservationVerificationTest.output.classesDirs
+            classpath = sourceSets.reservationVerificationTest.runtimeClasspath
+            useJUnitPlatform()
+        }
+    }
+}

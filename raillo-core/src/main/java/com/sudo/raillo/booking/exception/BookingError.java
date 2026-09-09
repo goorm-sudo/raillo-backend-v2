@@ -31,6 +31,14 @@ public enum BookingError implements ErrorCode {
 	PENDING_BOOKING_IDS_REQUIRED("조회할 예약 ID 목록이 필요합니다.", HttpStatus.BAD_REQUEST, "BOOKING_302"),
 	PENDING_BOOKING_EXPIRED("만료된 예약이 있습니다. 다시 예약해주세요.", HttpStatus.BAD_REQUEST, "BOOKING_303"),
 	INVALID_PENDING_BOOKING_TTL("예약을 처리할 수 없습니다.", HttpStatus.INTERNAL_SERVER_ERROR, "BOOKING_304"),
+	INVALID_RESERVATION_REQUEST("예약 요청 또는 멱등성 키가 올바르지 않습니다.", HttpStatus.BAD_REQUEST, "BOOKING_305"),
+	RESERVATION_REFERENCE_NOT_READY("예약 기준정보가 준비되지 않았습니다. 잠시 후 다시 시도해주세요.", HttpStatus.SERVICE_UNAVAILABLE, "BOOKING_306"),
+	RESERVATION_SALES_CLOSED("해당 구간의 예약 가능 시간이 지났습니다.", HttpStatus.CONFLICT, "BOOKING_307"),
+	RESERVATION_IDEMPOTENCY_CONFLICT("동일한 멱등성 키로 다른 예약을 요청할 수 없습니다.", HttpStatus.CONFLICT, "BOOKING_308"),
+	RESERVATION_REFERENCE_CHANGED("예약 기준정보가 변경되었습니다. 같은 키로 다시 시도해주세요.", HttpStatus.CONFLICT, "BOOKING_309"),
+	RESERVATION_STATE_INCONSISTENT("예약 상태를 확인할 수 없습니다. 잠시 후 다시 시도해주세요.", HttpStatus.SERVICE_UNAVAILABLE, "BOOKING_310"),
+	RESERVATION_ID_CONFLICT("예약 식별자가 중복되었습니다. 같은 키로 다시 시도해주세요.", HttpStatus.CONFLICT, "BOOKING_311"),
+	RESERVATION_RESULT_UNKNOWN("예약 결과를 확인할 수 없습니다. 같은 키로 다시 시도해주세요.", HttpStatus.SERVICE_UNAVAILABLE, "BOOKING_312"),
 
 	// 좌석 점유·충돌 (4xx)
 	SEAT_CONFLICT_WITH_SOLD("이미 판매된 좌석이 존재하는 구간입니다.", HttpStatus.CONFLICT, "BOOKING_401"),

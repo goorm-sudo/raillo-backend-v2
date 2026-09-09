@@ -1,6 +1,6 @@
 # 예약·예매 재설계
 
-> 작성 기준: 2026-09-08. 이 폴더는 앞으로 구현할 설계와 작업 계획이다. 코드 구현 완료를 의미하지 않는다.
+> 설계 작성: 2026-09-08. 예약 생성 구현 현황 갱신: 2026-09-09. 전체 시스템은 구현 중이며 단계별 현황은 로드맵을 따른다.
 
 ## 목표
 
@@ -30,6 +30,7 @@
 | [DB Outbox](15-outbox.md) | DB 결과를 Redis에 재반영하는 영속 작업 |
 | [애플리케이션 구성](16-architecture.md) | Facade·Service·port·adapter·트랜잭션 |
 | [검증·전환](17-validation-cutover.md) | 동시성·장애·성능·기존 데이터 전환 |
+| [예약 생성 구현 현황](18-reservation-create-implementation.md) | 구현 API·기준정보 계약·정책 기본값·테스트 실행·남은 작업 |
 
 ## 핵심 범위
 
@@ -49,9 +50,9 @@
 
 ## 현재 코드와의 관계
 
-- [Reservation](../../raillo-core/src/main/java/com/sudo/raillo/booking/domain/Reservation.java), [SeatReservation](../../raillo-core/src/main/java/com/sudo/raillo/booking/domain/SeatReservation.java)은 존재하지만 상태·만료·승인 시도 등 새 필드는 아직 없다.
-- DB 예매 모델은 남아 있고, booking 서비스·저장소·컨트롤러는 정리된 상태다. 이름만 존재한다고 새 동작이 구현된 것으로 보지 않는다.
+- [Reservation](../../raillo-core/src/main/java/com/sudo/raillo/booking/domain/Reservation.java)에 상태·만료·구간·버전 필드를 추가했고, [SeatReservation](../../raillo-core/src/main/java/com/sudo/raillo/booking/domain/SeatReservation.java)에 운임 스냅샷을 추가했다. 주문·승인 시도 연결은 후속 작업이다.
+- 예약 생성 Controller·Facade·Service·Redis Repository·Lua를 구현했다. 기준정보 적재기와 전체 애플리케이션 연동은 남아 있다. 상세 실행 방법은 [구현 현황](18-reservation-create-implementation.md)을 따른다.
 - payment는 `application/provided`, `application/required`, `adapter` 구조다. 이를 유지하며 예약 연동 계약을 새로 정의한다.
 - [기존 Hold 문서](../seat-hold-architecture.md), [기존 충돌 검증 문서](../seat-conflict-validation.md), [기존 도메인 문서](../domain-model.md)는 이전 흐름을 포함한다. 새 설계의 상세 기준은 이 폴더이며, 기존 문서 갱신은 전환 단계 작업이다.
 
-문서에 적힌 체크박스는 모두 앞으로 수행할 작업이다. 문서 작성만으로 체크하지 않는다.
+체크된 항목만 구현·검증 완료를 의미한다. 문서 작성만으로 체크하지 않는다.
