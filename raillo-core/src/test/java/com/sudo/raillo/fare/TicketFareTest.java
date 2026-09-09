@@ -2,7 +2,6 @@ package com.sudo.raillo.fare;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.sudo.raillo.booking.application.service.BookingService;
 import com.sudo.raillo.booking.domain.Ticket;
 import com.sudo.raillo.booking.domain.type.PassengerType;
 import com.sudo.raillo.booking.infrastructure.TicketRepository;

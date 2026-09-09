@@ -4,7 +4,6 @@ import java.util.List;
 
 import org.springframework.stereotype.Component;
 
-import com.sudo.raillo.booking.application.service.SeatHoldService;
 import com.sudo.raillo.payment.application.required.SeatHoldReleaser;
 
 import lombok.RequiredArgsConstructor;

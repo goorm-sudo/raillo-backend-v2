@@ -1,6 +1,5 @@
 package com.sudo.raillo.train.application.facade;
 
-import com.sudo.raillo.booking.application.service.SeatHoldService;
 import com.sudo.raillo.common.exception.BusinessException;
 import com.sudo.raillo.train.application.calculator.SeatAvailabilityCalculator;
 import com.sudo.raillo.train.application.dto.SeatBookingInfo;

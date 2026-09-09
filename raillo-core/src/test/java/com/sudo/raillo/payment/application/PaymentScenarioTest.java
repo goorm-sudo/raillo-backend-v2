@@ -14,9 +14,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
-import com.sudo.raillo.booking.application.service.SeatHoldService;
-import com.sudo.raillo.booking.domain.PendingBooking;
-import com.sudo.raillo.booking.domain.PendingSeatBooking;
+import com.sudo.raillo.booking.domain.Reservation;
+import com.sudo.raillo.booking.domain.SeatReservation;
 import com.sudo.raillo.booking.domain.SeatBooking;
 import com.sudo.raillo.booking.domain.type.PassengerType;
 import com.sudo.raillo.booking.infrastructure.BookingRedisRepository;
@@ -30,10 +29,6 @@ import com.sudo.raillo.order.domain.status.OrderStatus;
 import com.sudo.raillo.order.infrastructure.OrderRepository;
 import com.sudo.raillo.payment.application.provided.PaymentConfirmer;
 import com.sudo.raillo.payment.application.provided.PaymentPreparer;
-import com.sudo.raillo.payment.application.PaymentConfirmCommand;
-import com.sudo.raillo.payment.application.PaymentConfirmResult;
-import com.sudo.raillo.payment.application.PaymentPrepareCommand;
-import com.sudo.raillo.payment.application.PaymentPrepareResult;
 import com.sudo.raillo.payment.domain.Payment;
 import com.sudo.raillo.payment.domain.PaymentStatus;
 import com.sudo.raillo.payment.domain.PaymentMethod;
@@ -115,9 +110,9 @@ class PaymentScenarioTest {
 		ScheduleStop departureStop = trainScheduleResult.scheduleStops().get(0);
 		ScheduleStop arrivalStop = trainScheduleResult.scheduleStops().get(1);
 
-		PendingBooking pendingBooking = createPendingBookingWithHold(amount);
+		Reservation reservation = createPendingBookingWithHold(amount);
 		PaymentPrepareResult preparedResult = paymentPreparer.prepare(
-			new PaymentPrepareCommand(List.of(pendingBooking.getId())), memberNo);
+			new PaymentPrepareCommand(List.of(reservation.getId())), memberNo);
 
 		// 준비 단계 검증
 		assertThat(preparedResult.orderCode()).isNotNull();
@@ -150,7 +145,7 @@ class PaymentScenarioTest {
 		assertThat(bookingRepository.findAll()).isNotEmpty();
 
 		// then - SeatBooking 생성 검증
-		List<Long> seatIds = pendingBooking.getSeatIds();
+		List<Long> seatIds = reservation.getSeatIds();
 		List<SeatBooking> seatBookings = seatBookingRepository.findOverlappingSeatBookings(
 			trainScheduleResult.trainSchedule().getId(),
 			seatIds,
@@ -160,7 +155,7 @@ class PaymentScenarioTest {
 		assertThat(seatBookings).hasSize(1);
 
 		// then - PendingBooking 삭제 검증 (Redis에서 제거됨)
-		assertThat(bookingRedisRepository.getPendingBooking(pendingBooking.getId())).isEmpty();
+		assertThat(bookingRedisRepository.getPendingBooking(reservation.getId())).isEmpty();
 	}
 
 	@Test
@@ -170,9 +165,9 @@ class PaymentScenarioTest {
 		BigDecimal amount = BigDecimal.valueOf(50000);
 		String paymentKey = "toss_pk_scenario_fail";
 
-		PendingBooking pendingBooking = createPendingBookingWithHold(amount);
+		Reservation reservation = createPendingBookingWithHold(amount);
 		PaymentPrepareResult preparedResult = paymentPreparer.prepare(
-			new PaymentPrepareCommand(List.of(pendingBooking.getId())), memberNo);
+			new PaymentPrepareCommand(List.of(reservation.getId())), memberNo);
 
 		// given - 토스 승인 실패 Mock (4xx 에러)
 		given(tossPaymentClient.confirmPayment(any(PaymentConfirmCommand.class)))
@@ -209,9 +204,9 @@ class PaymentScenarioTest {
 		BigDecimal amount = BigDecimal.valueOf(50000);
 		String paymentKey = "toss_pk_scenario_amount_mismatch";
 
-		PendingBooking pendingBooking = createPendingBookingWithHold(amount);
+		Reservation reservation = createPendingBookingWithHold(amount);
 		PaymentPrepareResult preparedResult = paymentPreparer.prepare(
-			new PaymentPrepareCommand(List.of(pendingBooking.getId())), memberNo);
+			new PaymentPrepareCommand(List.of(reservation.getId())), memberNo);
 
 		// given - 토스 응답 금액 불일치 Mock (요청은 50000인데 토스가 60000 응답)
 		TossPaymentConfirmResponse tossResponse = new TossPaymentConfirmResponse(
@@ -236,9 +231,9 @@ class PaymentScenarioTest {
 		BigDecimal amount = BigDecimal.valueOf(50000);
 		String paymentKey = "toss_pk_scenario_unknown_method";
 
-		PendingBooking pendingBooking = createPendingBookingWithHold(amount);
+		Reservation reservation = createPendingBookingWithHold(amount);
 		PaymentPrepareResult preparedResult = paymentPreparer.prepare(
-			new PaymentPrepareCommand(List.of(pendingBooking.getId())), memberNo);
+			new PaymentPrepareCommand(List.of(reservation.getId())), memberNo);
 
 		// given - 알 수 없는 결제수단 Mock
 		TossPaymentConfirmResponse tossResponse = new TossPaymentConfirmResponse(
@@ -269,9 +264,9 @@ class PaymentScenarioTest {
 			trainScheduleResult.trainSchedule().getTrain(), CarType.STANDARD, 2);
 		List<Long> seatIds = seats.stream().map(Seat::getId).toList();
 
-		PendingBooking pb1 = createSingleSeatPendingBooking(
+		Reservation pb1 = createSingleSeatPendingBooking(
 			departureStop, arrivalStop, seatIds.get(0), farePerBooking);
-		PendingBooking pb2 = createSingleSeatPendingBooking(
+		Reservation pb2 = createSingleSeatPendingBooking(
 			departureStop, arrivalStop, seatIds.get(1), farePerBooking);
 
 		Long trainCarId = seats.get(0).getTrainCar().getId();
@@ -326,19 +321,19 @@ class PaymentScenarioTest {
 		assertThat(payment.getPaymentStatus()).isEqualTo(PaymentStatus.PAID);
 	}
 
-	private PendingBooking createSingleSeatPendingBooking(
+	private Reservation createSingleSeatPendingBooking(
 		ScheduleStop departureStop, ScheduleStop arrivalStop, Long seatId, BigDecimal fare) {
 		return PendingBookingFixture.builder()
 			.withMemberNo(memberNo)
 			.withTrainScheduleId(trainScheduleResult.trainSchedule().getId())
 			.withDepartureStopId(departureStop.getId())
 			.withArrivalStopId(arrivalStop.getId())
-			.withPendingSeatBookings(List.of(new PendingSeatBooking(seatId, PassengerType.ADULT)))
+			.withSeatReservations(List.of(new SeatReservation(seatId, PassengerType.ADULT)))
 			.withTotalFare(fare)
 			.build();
 	}
 
-	private PendingBooking createPendingBookingWithHold(BigDecimal fare) {
+	private Reservation createPendingBookingWithHold(BigDecimal fare) {
 		ScheduleStop departureStop = trainScheduleResult.scheduleStops().get(0);
 		ScheduleStop arrivalStop = trainScheduleResult.scheduleStops().get(1);
 
@@ -347,19 +342,19 @@ class PaymentScenarioTest {
 		List<Long> seatIds = seats.stream().map(Seat::getId).toList();
 		Long trainCarId = seats.get(0).getTrainCar().getId();
 
-		PendingBooking pendingBooking = PendingBookingFixture.builder()
+		Reservation reservation = PendingBookingFixture.builder()
 			.withMemberNo(memberNo)
 			.withTrainScheduleId(trainScheduleResult.trainSchedule().getId())
 			.withDepartureStopId(departureStop.getId())
 			.withArrivalStopId(arrivalStop.getId())
-			.withPendingSeatBookings(List.of(
-				new PendingSeatBooking(seatIds.get(0), PassengerType.ADULT)
+			.withSeatReservations(List.of(
+				new SeatReservation(seatIds.get(0), PassengerType.ADULT)
 			))
 			.withTotalFare(fare)
 			.build();
 
 		seatHoldService.holdSeats(
-			pendingBooking.getId(),
+			reservation.getId(),
 			trainScheduleResult.trainSchedule().getId(),
 			departureStop,
 			arrivalStop,
@@ -368,7 +363,7 @@ class PaymentScenarioTest {
 			Duration.ofMinutes(10)
 		);
 
-		bookingRedisRepository.savePendingBooking(pendingBooking);
-		return pendingBooking;
+		bookingRedisRepository.savePendingBooking(reservation);
+		return reservation;
 	}
 }

@@ -12,8 +12,8 @@
 - `StationFare` — Fare between two stations (standardFare, firstClassFare)
 
 ### Booking Domain
-- `PendingBooking` — Temporary reservation in Redis (TTL 10min) before payment
-- `PendingSeatBooking` — Seat info within PendingBooking
+- `Reservation` — Temporary reservation in Redis (TTL 10min) before payment
+- `SeatReservation` — Seat info within PendingBooking
 - `Booking` — Confirmed booking after payment (예매)
 - `SeatBooking` — Seat info within Booking
 - `Ticket` — Issued ticket per seat after payment (승차권)

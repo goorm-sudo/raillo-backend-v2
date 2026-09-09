@@ -5,7 +5,7 @@ import java.util.List;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.sudo.raillo.booking.domain.PendingBooking;
+import com.sudo.raillo.booking.domain.Reservation;
 import com.sudo.raillo.member.domain.Member;
 import com.sudo.raillo.order.domain.Order;
 import com.sudo.raillo.payment.application.provided.PaymentPreparer;
@@ -40,15 +40,15 @@ public class PaymentPrepareService implements PaymentPreparer {
 
 	@Override
 	public PaymentPrepareResult prepare(PaymentPrepareCommand command, String memberNo) {
-		List<PendingBooking> pendingBookings = pendingBookingReader.getPendingBookings(command.pendingBookingIds(), memberNo);
-		seatConflictValidator.validateSeatConflicts(pendingBookings);
+		List<Reservation> reservations = pendingBookingReader.getPendingBookings(command.pendingBookingIds(), memberNo);
+		seatConflictValidator.validateSeatConflicts(reservations);
 
 		Member member = memberFinder.getMemberByMemberNo(memberNo);
-		Order order = orderRegister.createOrder(memberNo, pendingBookings);
+		Order order = orderRegister.createOrder(memberNo, reservations);
 		Payment payment = paymentModifier.createPayment(member, order);
 
 		log.info("[결제 준비 완료] orderId={}, paymentId={}, amount={}, pendingBookingCount={}",
-			order.getOrderCode(), payment.getId(), order.getTotalAmount(), pendingBookings.size());
+			order.getOrderCode(), payment.getId(), order.getTotalAmount(), reservations.size());
 
 		return PaymentPrepareResult.from(order);
 	}

@@ -2,7 +2,7 @@ package com.sudo.raillo.payment.application.required;
 
 import java.util.List;
 
-import com.sudo.raillo.booking.domain.PendingBooking;
+import com.sudo.raillo.booking.domain.Reservation;
 import com.sudo.raillo.order.domain.Order;
 
 /**
@@ -13,5 +13,5 @@ import com.sudo.raillo.order.domain.Order;
  */
 public interface OrderRegister {
 
-	Order createOrder(String memberNo, List<PendingBooking> pendingBookings);
+	Order createOrder(String memberNo, List<Reservation> reservations);
 }

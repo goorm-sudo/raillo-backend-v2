@@ -4,8 +4,8 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;
 
-import com.sudo.raillo.booking.domain.PendingBooking;
-import com.sudo.raillo.booking.domain.PendingSeatBooking;
+import com.sudo.raillo.booking.domain.Reservation;
+import com.sudo.raillo.booking.domain.SeatReservation;
 import com.sudo.raillo.booking.domain.type.PassengerType;
 
 import lombok.AccessLevel;
@@ -19,10 +19,10 @@ public class PendingBookingFixture {
 	private Long trainScheduleId = 1L;
 	private Long departureStopId = 1L;
 	private Long arrivalStopId = 2L;
-	private List<PendingSeatBooking> pendingSeatBookings = List.of(new PendingSeatBooking(1L, PassengerType.ADULT));
+	private List<SeatReservation> seatReservations = List.of(new SeatReservation(1L, PassengerType.ADULT));
 	private BigDecimal totalFare = BigDecimal.ZERO;
 
-	public static PendingBooking create() {
+	public static Reservation create() {
 		return builder().build();
 	}
 
@@ -31,14 +31,14 @@ public class PendingBookingFixture {
 		return new PendingBookingFixture();
 	}
 
-	public PendingBooking build() {
-		return PendingBooking.create(
+	public Reservation build() {
+		return Reservation.create(
 			id,
 			memberNo,
 			trainScheduleId,
 			departureStopId,
 			arrivalStopId,
-			pendingSeatBookings,
+			seatReservations,
 			totalFare
 		);
 	}
@@ -68,8 +68,8 @@ public class PendingBookingFixture {
 		return this;
 	}
 
-	public PendingBookingFixture withPendingSeatBookings(List<PendingSeatBooking> pendingSeatBookings) {
-		this.pendingSeatBookings = pendingSeatBookings;
+	public PendingBookingFixture withSeatReservations(List<SeatReservation> seatReservations) {
+		this.seatReservations = seatReservations;
 		return this;
 	}
 

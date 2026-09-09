@@ -9,7 +9,7 @@ import java.util.stream.Stream;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.sudo.raillo.booking.domain.PendingBooking;
+import com.sudo.raillo.booking.domain.Reservation;
 import com.sudo.raillo.booking.exception.BookingError;
 import com.sudo.raillo.common.exception.BusinessException;
 import com.sudo.raillo.member.domain.Member;
@@ -62,7 +62,7 @@ public class PaymentConfirmService implements PaymentConfirmer {
 			command.orderId(), command.paymentKey(), command.amount());
 
 		Order order = orderReader.getOrderByOrderCode(command.orderId());
-		List<PendingBooking> pendingBookings = validateAndGetPendingBookings(order, memberNo);
+		List<Reservation> reservations = validateAndGetPendingBookings(order, memberNo);
 		Member member = memberFinder.getMemberByMemberNo(memberNo);
 		Payment payment = paymentModifier.getPaymentByOrder(order);
 
@@ -91,13 +91,13 @@ public class PaymentConfirmService implements PaymentConfirmer {
 		order.completePayment();
 		bookingCreator.createBookingFromOrder(order);
 		payment.approve(result.method());
-		cleanupPendingBookings(pendingBookings);
+		cleanupPendingBookings(reservations);
 
 		log.info("[결제 승인 완료] paymentId={}, orderCode={}", payment.getId(), command.orderId());
 		return PaymentConfirmResult.from(payment);
 	}
 
-	private List<PendingBooking> validateAndGetPendingBookings(Order order, String memberNo) {
+	private List<Reservation> validateAndGetPendingBookings(Order order, String memberNo) {
 		List<String> pendingBookingIds = orderReader.getPendingBookingIds(order);
 		if (pendingBookingIds.isEmpty()) {
 			log.error("[PendingBooking 검증 실패] pendingBookingIds가 없음: orderCode={}", order.getOrderCode());
@@ -106,11 +106,11 @@ public class PaymentConfirmService implements PaymentConfirmer {
 		return pendingBookingReader.getPendingBookings(pendingBookingIds, memberNo);
 	}
 
-	private void cleanupPendingBookings(List<PendingBooking> pendingBookings) {
-		List<String> pendingBookingIds = pendingBookings.stream()
-			.map(PendingBooking::getId)
+	private void cleanupPendingBookings(List<Reservation> reservations) {
+		List<String> pendingBookingIds = reservations.stream()
+			.map(Reservation::getId)
 			.toList();
-		String memberNo = pendingBookings.get(0).getMemberNo();
+		String memberNo = reservations.get(0).getMemberNo();
 
 		try {
 			pendingBookingReader.deletePendingBookings(pendingBookingIds, memberNo);
@@ -121,14 +121,14 @@ public class PaymentConfirmService implements PaymentConfirmer {
 			log.error("[PendingBooking 삭제 실패] error={}", e.getMessage(), e);
 		}
 
-		List<Long> allStopIds = pendingBookings.stream()
+		List<Long> allStopIds = reservations.stream()
 			.flatMap(pb -> Stream.of(pb.getDepartureStopId(), pb.getArrivalStopId()))
 			.toList();
 
 		Map<Long, ScheduleStop> stopMap = trainScheduleReader.getScheduleStops(allStopIds).stream()
 			.collect(Collectors.toMap(ScheduleStop::getId, Function.identity()));
 
-		pendingBookings.forEach(pb -> {
+		reservations.forEach(pb -> {
 			List<Long> seatIds = pb.getSeatIds();
 			Long trainCarId = trainSeatReader.getTrainCarId(seatIds);
 			ScheduleStop departureStop = stopMap.get(pb.getDepartureStopId());
@@ -144,6 +144,6 @@ public class PaymentConfirmService implements PaymentConfirmer {
 			);
 		});
 
-		log.info("[PendingBooking 삭제 및 Hold 해제 완료] pendingBookingCount={}", pendingBookings.size());
+		log.info("[PendingBooking 삭제 및 Hold 해제 완료] pendingBookingCount={}", reservations.size());
 	}
 }

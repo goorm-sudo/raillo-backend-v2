@@ -1,8 +1,8 @@
 package com.sudo.raillo.order.application;
 
 import com.sudo.raillo.train.application.calculator.FareCalculator;
-import com.sudo.raillo.booking.domain.PendingBooking;
-import com.sudo.raillo.booking.domain.PendingSeatBooking;
+import com.sudo.raillo.booking.domain.Reservation;
+import com.sudo.raillo.booking.domain.SeatReservation;
 import com.sudo.raillo.common.exception.BusinessException;
 import com.sudo.raillo.member.domain.Member;
 import com.sudo.raillo.member.exception.MemberError;
@@ -84,21 +84,21 @@ public class OrderService {
 	/**
 	 * 주문 생성
 	 * @param memberNo 회원 번호
-	 * @param pendingBookings 주문할 PendingBooking 리스트
+	 * @param reservations 주문할 PendingBooking 리스트
 	 * @return 생성된 Order
 	 */
-	public Order createOrder(String memberNo, List<PendingBooking> pendingBookings) {
-		orderValidator.validatePendingBookingsNotEmpty(pendingBookings);
+	public Order createOrder(String memberNo, List<Reservation> reservations) {
+		orderValidator.validatePendingBookingsNotEmpty(reservations);
 
 		Member member = getMember(memberNo);
 
 		// 1. 연관 엔티티 일괄 조회 (N+1 방지)
-		Map<Long, Seat> seatMap = getSeatMap(pendingBookings);
-		Map<Long, TrainSchedule> scheduleMap = getScheduleMap(pendingBookings);
-		Map<Long, ScheduleStop> stopMap = getStopMap(pendingBookings);
+		Map<Long, Seat> seatMap = getSeatMap(reservations);
+		Map<Long, TrainSchedule> scheduleMap = getScheduleMap(reservations);
+		Map<Long, ScheduleStop> stopMap = getStopMap(reservations);
 
 		// 2. 운임 계산 정보 생성
-		List<OrderBookingInfo> orderBookingInfos = createOrderBookingInfos(pendingBookings, seatMap, stopMap);
+		List<OrderBookingInfo> orderBookingInfos = createOrderBookingInfos(reservations, seatMap, stopMap);
 
 		// 3. 총 주문 금액 계산
 		BigDecimal totalAmount = orderBookingInfos.stream()
@@ -143,10 +143,10 @@ public class OrderService {
 			)).forEach(orderSeatBookingRepository::save);
 	}
 
-	private Map<Long, Seat> getSeatMap(List<PendingBooking> pendingBookings) {
-		List<Long> seatIds = pendingBookings.stream()
-			.flatMap(pb -> pb.getPendingSeatBookings().stream())
-			.map(PendingSeatBooking::seatId)
+	private Map<Long, Seat> getSeatMap(List<Reservation> reservations) {
+		List<Long> seatIds = reservations.stream()
+			.flatMap(pb -> pb.getSeatReservations().stream())
+			.map(SeatReservation::seatId)
 			.toList();
 
 		List<Seat> seats = seatRepository.findAllByIdWithTrainCar(seatIds);
@@ -158,9 +158,9 @@ public class OrderService {
 		return seats.stream().collect(Collectors.toMap(Seat::getId, seat -> seat));
 	}
 
-	private Map<Long, TrainSchedule> getScheduleMap(List<PendingBooking> pendingBookings) {
-		Set<Long> scheduleIds = pendingBookings.stream()
-			.map(PendingBooking::getTrainScheduleId)
+	private Map<Long, TrainSchedule> getScheduleMap(List<Reservation> reservations) {
+		Set<Long> scheduleIds = reservations.stream()
+			.map(Reservation::getTrainScheduleId)
 			.collect(Collectors.toSet());
 
 		List<TrainSchedule> schedules = trainScheduleRepository.findAllByIdWithTrain(scheduleIds);
@@ -172,8 +172,8 @@ public class OrderService {
 		return schedules.stream().collect(Collectors.toMap(TrainSchedule::getId, schedule -> schedule));
 	}
 
-	private Map<Long, ScheduleStop> getStopMap(List<PendingBooking> pendingBookings) {
-		Set<Long> stopIds = pendingBookings.stream()
+	private Map<Long, ScheduleStop> getStopMap(List<Reservation> reservations) {
+		Set<Long> stopIds = reservations.stream()
 			.flatMap(pb -> java.util.stream.Stream.of(pb.getDepartureStopId(), pb.getArrivalStopId()))
 			.collect(Collectors.toSet());
 
@@ -187,25 +187,25 @@ public class OrderService {
 	}
 
 	private List<OrderBookingInfo> createOrderBookingInfos(
-		List<PendingBooking> pendingBookings,
+		List<Reservation> reservations,
 		Map<Long, Seat> seatMap,
 		Map<Long, ScheduleStop> stopMap
 	) {
-		return pendingBookings.stream()
+		return reservations.stream()
 			.map(booking -> createOrderBookingInfo(booking, seatMap, stopMap))
 			.toList();
 	}
 
 	private OrderBookingInfo createOrderBookingInfo(
-		PendingBooking pendingBooking,
+		Reservation reservation,
 		Map<Long, Seat> seatMap,
 		Map<Long, ScheduleStop> stopMap
 	) {
-		ScheduleStop departureStop = stopMap.get(pendingBooking.getDepartureStopId());
-		ScheduleStop arrivalStop = stopMap.get(pendingBooking.getArrivalStopId());
+		ScheduleStop departureStop = stopMap.get(reservation.getDepartureStopId());
+		ScheduleStop arrivalStop = stopMap.get(reservation.getArrivalStopId());
 
 		List<OrderSeatBookingInfo> seatInfos = calculateSeatFares(
-			pendingBooking.getPendingSeatBookings(),
+			reservation.getSeatReservations(),
 			departureStop.getStation().getId(),
 			arrivalStop.getStation().getId(),
 			seatMap
@@ -216,22 +216,22 @@ public class OrderService {
 			.reduce(BigDecimal.ZERO, BigDecimal::add);
 
 		return new OrderBookingInfo(
-			pendingBooking.getId(),
-			pendingBooking.getTrainScheduleId(),
-			pendingBooking.getDepartureStopId(),
-			pendingBooking.getArrivalStopId(),
+			reservation.getId(),
+			reservation.getTrainScheduleId(),
+			reservation.getDepartureStopId(),
+			reservation.getArrivalStopId(),
 			totalFare,
 			seatInfos
 		);
 	}
 
 	private List<OrderSeatBookingInfo> calculateSeatFares(
-		List<PendingSeatBooking> pendingSeatBookings,
+		List<SeatReservation> seatReservations,
 		Long departureStationId,
 		Long arrivalStationId,
 		Map<Long, Seat> seatMap
 	) {
-		return pendingSeatBookings.stream()
+		return seatReservations.stream()
 			.map(seatBooking -> {
 				Seat seat = seatMap.get(seatBooking.seatId());
 				BigDecimal fare = fareCalculator.calculateFare(

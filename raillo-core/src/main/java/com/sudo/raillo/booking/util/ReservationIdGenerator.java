@@ -7,7 +7,7 @@ import java.util.concurrent.ThreadLocalRandom;
 import org.springframework.stereotype.Component;
 
 @Component
-public class PendingBookingIdGenerator {
+public class ReservationIdGenerator {
 
 	private static final String PREFIX = "PB";
 	private static final DateTimeFormatter TIMESTAMP_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");

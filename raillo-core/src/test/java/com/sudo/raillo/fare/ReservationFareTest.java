@@ -4,8 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.sudo.raillo.booking.application.dto.request.PendingBookingCreateRequest;
 import com.sudo.raillo.booking.application.dto.response.PendingBookingCreateResponse;
-import com.sudo.raillo.booking.application.facade.PendingBookingFacade;
-import com.sudo.raillo.booking.domain.PendingBooking;
+import com.sudo.raillo.booking.domain.Reservation;
 import com.sudo.raillo.booking.domain.type.PassengerType;
 import com.sudo.raillo.booking.infrastructure.BookingRedisRepository;
 import com.sudo.raillo.member.domain.Member;
@@ -30,7 +29,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
 @ServiceTest
-class PendingBookingFareTest {
+class ReservationFareTest {
 
 	@Autowired
 	private PendingBookingFacade pendingBookingFacade;
@@ -87,11 +86,11 @@ class PendingBookingFareTest {
 		);
 
 		// then
-		PendingBooking pendingBooking = bookingRedisRepository
+		Reservation reservation = bookingRedisRepository
 			.getPendingBooking(response.pendingBookingId()).orElseThrow();
 		StationFare stationFare = getStationFare(departureStop.getStation().getId(), arrivalStop.getStation().getId());
 
-		assertThat(pendingBooking.getTotalFare()).isEqualByComparingTo(stationFare.getStandardFare());
+		assertThat(reservation.getTotalFare()).isEqualByComparingTo(stationFare.getStandardFare());
 	}
 
 	@Test
@@ -115,11 +114,11 @@ class PendingBookingFareTest {
 		);
 
 		// then
-		PendingBooking pendingBooking = bookingRedisRepository
+		Reservation reservation = bookingRedisRepository
 			.getPendingBooking(response.pendingBookingId()).orElseThrow();
 		StationFare stationFare = getStationFare(departureStop.getStation().getId(), arrivalStop.getStation().getId());
 
-		assertThat(pendingBooking.getTotalFare())
+		assertThat(reservation.getTotalFare())
 			.isEqualByComparingTo(stationFare.getStandardFare().multiply(BigDecimal.valueOf(0.6)));
 	}
 
@@ -144,11 +143,11 @@ class PendingBookingFareTest {
 		);
 
 		// then
-		PendingBooking pendingBooking = bookingRedisRepository
+		Reservation reservation = bookingRedisRepository
 			.getPendingBooking(response.pendingBookingId()).orElseThrow();
 		StationFare stationFare = getStationFare(departureStop.getStation().getId(), arrivalStop.getStation().getId());
 
-		assertThat(pendingBooking.getTotalFare()).isEqualByComparingTo(stationFare.getFirstClassFare());
+		assertThat(reservation.getTotalFare()).isEqualByComparingTo(stationFare.getFirstClassFare());
 	}
 
 	@Test
@@ -172,11 +171,11 @@ class PendingBookingFareTest {
 		);
 
 		// then
-		PendingBooking pendingBooking = bookingRedisRepository
+		Reservation reservation = bookingRedisRepository
 			.getPendingBooking(response.pendingBookingId()).orElseThrow();
 		StationFare stationFare = getStationFare(departureStop.getStation().getId(), arrivalStop.getStation().getId());
 
-		assertThat(pendingBooking.getTotalFare())
+		assertThat(reservation.getTotalFare())
 			.isEqualByComparingTo(stationFare.getStandardFare().multiply(BigDecimal.valueOf(2)));
 	}
 
@@ -201,14 +200,14 @@ class PendingBookingFareTest {
 		);
 
 		// then
-		PendingBooking pendingBooking = bookingRedisRepository
+		Reservation reservation = bookingRedisRepository
 			.getPendingBooking(response.pendingBookingId()).orElseThrow();
 
 		StationFare stationFare = getStationFare(departureStop.getStation().getId(), arrivalStop.getStation().getId());
 		BigDecimal adultFare = stationFare.getStandardFare();
 		BigDecimal childFare = stationFare.getStandardFare().multiply(BigDecimal.valueOf(0.6));
 
-		assertThat(pendingBooking.getTotalFare()).isEqualByComparingTo(adultFare.add(childFare));
+		assertThat(reservation.getTotalFare()).isEqualByComparingTo(adultFare.add(childFare));
 	}
 
 

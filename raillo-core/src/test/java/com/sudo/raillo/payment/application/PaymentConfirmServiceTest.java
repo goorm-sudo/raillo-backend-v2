@@ -14,9 +14,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
-import com.sudo.raillo.booking.application.service.SeatHoldService;
-import com.sudo.raillo.booking.domain.PendingBooking;
-import com.sudo.raillo.booking.domain.PendingSeatBooking;
+import com.sudo.raillo.booking.domain.Reservation;
+import com.sudo.raillo.booking.domain.SeatReservation;
 import com.sudo.raillo.booking.domain.type.PassengerType;
 import com.sudo.raillo.booking.exception.BookingError;
 import com.sudo.raillo.booking.infrastructure.BookingRedisRepository;
@@ -31,10 +30,6 @@ import com.sudo.raillo.order.exception.OrderError;
 import com.sudo.raillo.order.infrastructure.OrderRepository;
 import com.sudo.raillo.payment.application.provided.PaymentPreparer;
 import com.sudo.raillo.payment.application.provided.PaymentConfirmer;
-import com.sudo.raillo.payment.application.PaymentConfirmCommand;
-import com.sudo.raillo.payment.application.PaymentConfirmResult;
-import com.sudo.raillo.payment.application.PaymentPrepareCommand;
-import com.sudo.raillo.payment.application.PaymentPrepareResult;
 import com.sudo.raillo.payment.domain.Payment;
 import com.sudo.raillo.payment.domain.PaymentStatus;
 import com.sudo.raillo.payment.domain.PaymentMethod;
@@ -117,9 +112,9 @@ class PaymentConfirmServiceTest {
 		BigDecimal amount = BigDecimal.valueOf(50000);
 		String paymentKey = "toss_pk_test_12345";
 
-		PendingBooking pendingBooking = createPendingBookingWithHold(amount);
+		Reservation reservation = createPendingBookingWithHold(amount);
 		PaymentPrepareResult preparedResult = paymentPreparer.prepare(
-			new PaymentPrepareCommand(List.of(pendingBooking.getId())), memberNo);
+			new PaymentPrepareCommand(List.of(reservation.getId())), memberNo);
 
 		TossPaymentConfirmResponse tossResponse = new TossPaymentConfirmResponse(
 			paymentKey, preparedResult.orderCode(), "카드", amount.longValue(), "DONE");
@@ -146,9 +141,9 @@ class PaymentConfirmServiceTest {
 		BigDecimal amount = BigDecimal.valueOf(50000);
 		String paymentKey = "toss_pk_test_67890";
 
-		PendingBooking pendingBooking = createPendingBookingWithHold(amount);
+		Reservation reservation = createPendingBookingWithHold(amount);
 		PaymentPrepareResult preparedResult = paymentPreparer.prepare(
-			new PaymentPrepareCommand(List.of(pendingBooking.getId())), memberNo);
+			new PaymentPrepareCommand(List.of(reservation.getId())), memberNo);
 
 		TossPaymentConfirmResponse tossResponse = new TossPaymentConfirmResponse(
 			paymentKey, preparedResult.orderCode(), "카드", amount.longValue(), "DONE");
@@ -183,9 +178,9 @@ class PaymentConfirmServiceTest {
 		BigDecimal amount = BigDecimal.valueOf(50000);
 		String paymentKey = "toss_pk_requires_new_test";
 
-		PendingBooking pendingBooking = createPendingBookingWithHold(amount);
+		Reservation reservation = createPendingBookingWithHold(amount);
 		PaymentPrepareResult preparedResult = paymentPreparer.prepare(
-			new PaymentPrepareCommand(List.of(pendingBooking.getId())), memberNo);
+			new PaymentPrepareCommand(List.of(reservation.getId())), memberNo);
 
 		// 토스 API 실패 → 바깥 트랜잭션 롤백
 		given(tossPaymentClient.confirmPayment(any(PaymentConfirmCommand.class)))
@@ -222,13 +217,13 @@ class PaymentConfirmServiceTest {
 		BigDecimal amount = BigDecimal.valueOf(50000);
 		String paymentKey = "toss_pk_hold_release_test";
 
-		PendingBooking pendingBooking = createPendingBookingWithHold(amount);
+		Reservation reservation = createPendingBookingWithHold(amount);
 		ScheduleStop departureStop = trainScheduleResult.scheduleStops().get(0);
 		ScheduleStop arrivalStop = trainScheduleResult.scheduleStops().get(1);
-		Long seatId = pendingBooking.getPendingSeatBookings().get(0).seatId();
+		Long seatId = reservation.getSeatReservations().get(0).seatId();
 
 		PaymentPrepareResult preparedResult = paymentPreparer.prepare(
-			new PaymentPrepareCommand(List.of(pendingBooking.getId())), memberNo);
+			new PaymentPrepareCommand(List.of(reservation.getId())), memberNo);
 
 		TossPaymentConfirmResponse tossResponse = new TossPaymentConfirmResponse(
 			paymentKey, preparedResult.orderCode(), "카드", amount.longValue(), "DONE");
@@ -266,12 +261,12 @@ class PaymentConfirmServiceTest {
 		BigDecimal amount = BigDecimal.valueOf(50000);
 		String paymentKey = "toss_pk_expired_test";
 
-		PendingBooking pendingBooking = createPendingBookingWithHold(amount);
+		Reservation reservation = createPendingBookingWithHold(amount);
 		PaymentPrepareResult preparedResult = paymentPreparer.prepare(
-			new PaymentPrepareCommand(List.of(pendingBooking.getId())), memberNo);
+			new PaymentPrepareCommand(List.of(reservation.getId())), memberNo);
 
 		// PendingBooking을 Redis에서 삭제하여 TTL 만료 시뮬레이션
-		bookingRedisRepository.deletePendingBooking(pendingBooking.getId());
+		bookingRedisRepository.deletePendingBooking(reservation.getId());
 
 		PaymentConfirmCommand confirmRequest = new PaymentConfirmCommand(
 			paymentKey, preparedResult.orderCode(), amount);
@@ -290,24 +285,24 @@ class PaymentConfirmServiceTest {
 		BigDecimal amount = BigDecimal.valueOf(50000);
 		String paymentKey = "toss_pk_owner_test";
 
-		PendingBooking pendingBooking = createPendingBookingWithHold(amount);
+		Reservation reservation = createPendingBookingWithHold(amount);
 		PaymentPrepareResult preparedResult = paymentPreparer.prepare(
-			new PaymentPrepareCommand(List.of(pendingBooking.getId())), memberNo);
+			new PaymentPrepareCommand(List.of(reservation.getId())), memberNo);
 
 		// 다른 회원 생성
 		Member otherMember = memberRepository.save(MemberFixture.createOther());
 		String otherMemberNo = otherMember.getMemberDetail().getMemberNo();
 
 		// 다른 회원의 PendingBooking도 만들어서 Redis에 소유자 검증을 통과시킴
-		PendingBooking otherPendingBooking = PendingBookingFixture.builder()
-			.withId(pendingBooking.getId())
+		Reservation otherReservation = PendingBookingFixture.builder()
+			.withId(reservation.getId())
 			.withMemberNo(otherMemberNo)
 			.withTrainScheduleId(trainScheduleResult.trainSchedule().getId())
 			.withDepartureStopId(trainScheduleResult.scheduleStops().get(0).getId())
 			.withArrivalStopId(trainScheduleResult.scheduleStops().get(1).getId())
 			.withTotalFare(amount)
 			.build();
-		bookingRedisRepository.savePendingBooking(otherPendingBooking);
+		bookingRedisRepository.savePendingBooking(otherReservation);
 
 		PaymentConfirmCommand confirmRequest = new PaymentConfirmCommand(
 			paymentKey, preparedResult.orderCode(), amount);
@@ -327,9 +322,9 @@ class PaymentConfirmServiceTest {
 		BigDecimal wrongRequestAmount = BigDecimal.valueOf(30000);
 		String paymentKey = "toss_pk_amount_test";
 
-		PendingBooking pendingBooking = createPendingBookingWithHold(orderAmount);
+		Reservation reservation = createPendingBookingWithHold(orderAmount);
 		PaymentPrepareResult preparedResult = paymentPreparer.prepare(
-			new PaymentPrepareCommand(List.of(pendingBooking.getId())), memberNo);
+			new PaymentPrepareCommand(List.of(reservation.getId())), memberNo);
 
 		PaymentConfirmCommand confirmRequest = new PaymentConfirmCommand(
 			paymentKey, preparedResult.orderCode(), wrongRequestAmount);
@@ -348,9 +343,9 @@ class PaymentConfirmServiceTest {
 		BigDecimal amount = BigDecimal.valueOf(50000);
 		String paymentKey = "toss_pk_duplicate_test";
 
-		PendingBooking pendingBooking = createPendingBookingWithHold(amount);
+		Reservation reservation = createPendingBookingWithHold(amount);
 		PaymentPrepareResult preparedResult = paymentPreparer.prepare(
-			new PaymentPrepareCommand(List.of(pendingBooking.getId())), memberNo);
+			new PaymentPrepareCommand(List.of(reservation.getId())), memberNo);
 
 		// 기존 Payment를 PAID 상태로 변경
 		Order order = orderRepository.findByOrderCode(preparedResult.orderCode()).orElseThrow();
@@ -368,7 +363,7 @@ class PaymentConfirmServiceTest {
 			.hasMessage(PaymentError.PAYMENT_ALREADY_COMPLETED.getMessage());
 	}
 
-	private PendingBooking createPendingBookingWithHold(BigDecimal fare) {
+	private Reservation createPendingBookingWithHold(BigDecimal fare) {
 		ScheduleStop departureStop = trainScheduleResult.scheduleStops().get(0);
 		ScheduleStop arrivalStop = trainScheduleResult.scheduleStops().get(1);
 
@@ -377,20 +372,20 @@ class PaymentConfirmServiceTest {
 		List<Long> seatIds = seats.stream().map(Seat::getId).toList();
 		Long trainCarId = seats.get(0).getTrainCar().getId();
 
-		PendingBooking pendingBooking = PendingBookingFixture.builder()
+		Reservation reservation = PendingBookingFixture.builder()
 			.withMemberNo(memberNo)
 			.withTrainScheduleId(trainScheduleResult.trainSchedule().getId())
 			.withDepartureStopId(departureStop.getId())
 			.withArrivalStopId(arrivalStop.getId())
-			.withPendingSeatBookings(List.of(
-				new PendingSeatBooking(seatIds.get(0), PassengerType.ADULT)
+			.withSeatReservations(List.of(
+				new SeatReservation(seatIds.get(0), PassengerType.ADULT)
 			))
 			.withTotalFare(fare)
 			.build();
 
 		// 실제 플로우처럼 Seat Hold 먼저 설정 (PendingBookingFacade가 하는 일)
 		seatHoldService.holdSeats(
-			pendingBooking.getId(),
+			reservation.getId(),
 			trainScheduleResult.trainSchedule().getId(),
 			departureStop,
 			arrivalStop,
@@ -399,7 +394,7 @@ class PaymentConfirmServiceTest {
 			Duration.ofMinutes(10)
 		);
 
-		bookingRedisRepository.savePendingBooking(pendingBooking);
-		return pendingBooking;
+		bookingRedisRepository.savePendingBooking(reservation);
+		return reservation;
 	}
 }
