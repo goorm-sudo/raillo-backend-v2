@@ -19,8 +19,9 @@ public enum PaymentError implements ErrorCode {
 	PAYMENT_NOT_APPROVABLE("승인할 수 없는 결제 상태입니다.", HttpStatus.BAD_REQUEST, "PAYMENT_105"),
 	PAYMENT_NOT_REFUNDABLE("환불할 수 없는 결제 상태입니다.", HttpStatus.BAD_REQUEST, "PAYMENT_106"),
 	PAYMENT_CANNOT_FAIL("실패 처리할 수 없는 결제 상태입니다.", HttpStatus.BAD_REQUEST, "PAYMENT_107"),
+	PAYMENT_ATTEMPT_NOT_TRANSITIONABLE("결제 시도 상태를 전이할 수 없습니다.", HttpStatus.CONFLICT, "PAYMENT_108"),
 
-	// 금액/수단/키 (2xx)
+	// 금액과 수단, 키 (2xx)
 	PAYMENT_AMOUNT_MISMATCH("결제 금액이 일치하지 않습니다.", HttpStatus.BAD_REQUEST, "PAYMENT_201"),
 	INVALID_PAYMENT_METHOD("지원하지 않는 결제 수단입니다.", HttpStatus.BAD_REQUEST, "PAYMENT_202"),
 	PAYMENT_KEY_MISMATCH("결제 키가 일치하지 않습니다.", HttpStatus.BAD_REQUEST, "PAYMENT_203"),
