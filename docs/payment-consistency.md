@@ -191,6 +191,19 @@ Payload는 Redis 정리 지점을 특정할 수 있는 최소 정보만 담는�
 
 ## Rollout
 
+### PR 2 후속 작업 범위 (2026-09-11)
+
+`refactor/257-payment-consistency-worker`의 Tasks 8–12에서 다음 작업을 이어간다.
+
+- **Task 8–9:** `PaymentConfirmService.cleanupPendingBookings` 호출과 구현을 제거하고 OutboxWorker에 처리·재시도·최대 시도 초과 정책을 연결한다. 이번 PR의 처리기는 **NoOp**이며 실제 Redis 정리는 새 스키마 확정 후 별도 이슈에서 구현한다. 따라서 이번 PR의 outbox DONE은 Redis 정리 완료를 보장하지 않는다.
+- **Task 10:** 네트워크 타임아웃·응답 유실, Toss 성공 후 DB 확정/커밋 실패로 남은 `IN_PROGRESS`를 Toss 조회로 대사한다. 결과가 미확정이면 실패로 단정하거나 승인 API를 재호출하지 않고 다음 폴링까지 유지한다.
+- **Task 11–12:** 미처리·실패·복구 지표와 통합 테스트를 추가한다. 복구 후 같은 attemptId 재요청에 확정 결과가 반환되는지 검증하고, NoOp 처리기의 한계를 문서에 유지한다.
+
+승인 재요청의 요청 일치 검증, 최신 결과 조회, 결제별 동시 승인 차단, 승인 가능 상태 검증,
+입력 검증과 DB 무결성 오류 구분은 Worker 도입으로 해결되지 않으므로 선행 수정한다.
+
+### 적용 순서
+
 1. 승인 흐름에 `payment_attempt`와 `payment_outbox` 도입 (이슈 #257)
 2. `OutboxWorker`, `PaymentRecoveryWorker` 신설
 3. 취소 흐름에 대칭 적용 (이슈 #259)
