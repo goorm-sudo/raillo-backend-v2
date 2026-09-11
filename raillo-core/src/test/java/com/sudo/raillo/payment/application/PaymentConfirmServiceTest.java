@@ -18,6 +18,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import com.sudo.raillo.booking.application.service.SeatHoldService;
@@ -61,6 +62,7 @@ import com.sudo.raillo.payment.adapter.integration.toss.TossPaymentClient;
 import com.sudo.raillo.payment.adapter.integration.toss.TossPaymentConfirmResponse;
 import com.sudo.raillo.support.annotation.ServiceTest;
 import com.sudo.raillo.support.fixture.MemberFixture;
+import com.sudo.raillo.support.fixture.OrderFixture;
 import com.sudo.raillo.support.fixture.PendingBookingFixture;
 import com.sudo.raillo.support.helper.TrainScheduleResult;
 import com.sudo.raillo.support.helper.TrainScheduleTestHelper;
@@ -656,5 +658,47 @@ class PaymentConfirmServiceTest {
 		}
 		verify(tossPaymentClient, times(1)).confirmPayment(any());
 		assertThat(paymentAttemptRepository.findByAttemptId("second-id")).isEmpty();
+	}
+
+	@Test
+	@DisplayName("attemptId 중복이 아닌 DB 무결성 오류는 처리 중 오류로 바꾸지 않는다")
+	void propagates_unrelated_integrity_failure() {
+		// given: 다른 Payment가 이미 사용하는 paymentKey로 승인 시도 저장의 커밋을 실패시킨다.
+		BigDecimal amount = BigDecimal.valueOf(50000);
+		PendingBooking pendingBooking = createPendingBookingWithHold(amount);
+		PaymentPrepareResult prepared = paymentPreparer.prepare(
+			new PaymentPrepareCommand(List.of(pendingBooking.getId())), memberNo);
+		Order otherOrder = orderRepository.save(OrderFixture.create(member));
+		Payment otherPayment = Payment.create(member, otherOrder);
+		otherPayment.updatePaymentKey("duplicate-key");
+		paymentRepository.saveAndFlush(otherPayment);
+		PaymentConfirmCommand command = new PaymentConfirmCommand("duplicate-key", prepared.orderCode(), amount, "new-id");
+
+		// when / then
+		assertThatThrownBy(() -> paymentConfirmer.confirm(command, memberNo))
+			.isInstanceOf(DataIntegrityViolationException.class);
+		verify(tossPaymentClient, never()).confirmPayment(any());
+		assertThat(paymentAttemptRepository.findByAttemptId("new-id")).isEmpty();
+		Order order = orderRepository.findByOrderCode(prepared.orderCode()).orElseThrow();
+		assertThat(paymentRepository.findByOrder(order).orElseThrow().getPaymentKey()).isNull();
+	}
+
+	@Test
+	@DisplayName("64자를 초과한 attemptId는 DB 저장 전에 입력 오류로 거절한다")
+	void rejects_oversized_attempt_id_before_persistence() {
+		// given
+		BigDecimal amount = BigDecimal.valueOf(50000);
+		PendingBooking pendingBooking = createPendingBookingWithHold(amount);
+		PaymentPrepareResult prepared = paymentPreparer.prepare(
+			new PaymentPrepareCommand(List.of(pendingBooking.getId())), memberNo);
+		PaymentConfirmCommand command = new PaymentConfirmCommand("new-key", prepared.orderCode(), amount, "a".repeat(65));
+
+		// when / then
+		assertThatThrownBy(() -> paymentConfirmer.confirm(command, memberNo))
+			.isInstanceOf(BusinessException.class)
+			.hasMessage("결제 시도 ID는 64자 이하여야 합니다.");
+		verify(tossPaymentClient, never()).confirmPayment(any());
+		Order order = orderRepository.findByOrderCode(prepared.orderCode()).orElseThrow();
+		assertThat(paymentRepository.findByOrder(order).orElseThrow().getPaymentKey()).isNull();
 	}
 }

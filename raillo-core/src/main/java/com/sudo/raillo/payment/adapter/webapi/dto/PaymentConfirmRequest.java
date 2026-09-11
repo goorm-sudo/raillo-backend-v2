@@ -7,6 +7,7 @@ import com.sudo.raillo.payment.application.PaymentConfirmCommand;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.Size;
 
 /**
  * 결제 승인 요청 DTO
@@ -22,6 +23,7 @@ public record PaymentConfirmRequest(
 	@Positive(message = "amount는 0보다 커야 합니다")
 	BigDecimal amount,
 
+	@Size(max = 64, message = "attemptId는 64자 이하여야 합니다")
 	String attemptId
 ) {
 	public PaymentConfirmCommand toCommand() {

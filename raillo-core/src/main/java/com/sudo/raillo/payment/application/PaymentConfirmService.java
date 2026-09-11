@@ -80,6 +80,7 @@ public class PaymentConfirmService implements PaymentConfirmer {
 		// 따라서 이후 PaymentAttemptManager가 REQUIRES_NEW로 저장·커밋한 attempt는 findById로 조회되지 않는다.
 		// 일반 조회마다 새 스냅샷을 사용하는 READ_COMMITTED로 설정해, 별도 트랜잭션에서 커밋한 attempt를 읽는다.
 		String attemptId = command.attemptIdOrDerived();
+		paymentValidator.validateAttemptId(attemptId);
 		log.info("[결제 승인 시작] orderId={}, paymentKey={}, amount={}, attemptId={}",
 			command.orderId(), command.paymentKey(), command.amount(), attemptId);
 
@@ -109,8 +110,9 @@ public class PaymentConfirmService implements PaymentConfirmer {
 				payment.getId(), attemptId, command.paymentKey()
 			);
 		} catch (DataIntegrityViolationException e) {
-			// 동시 요청이 정확히 같은 attemptId로 방금 INSERT함. 처리 중 안내로 응답한다.
-			throw new BusinessException(PaymentError.PAYMENT_ATTEMPT_IN_PROGRESS);
+			// 별도 트랜잭션 롤백 후 실제로 같은 attempt가 생겼는지 확인한다. 다른 무결성 오류는 그대로 전파한다.
+			PaymentAttempt conflicting = paymentAttemptRepository.findByAttemptId(attemptId).orElseThrow(() -> e);
+			return handleExistingAttempt(conflicting, payment, command);
 		}
 		if (!started.created()) {
 			PaymentAttempt existing = paymentAttemptRepository.findById(started.attemptDbId())

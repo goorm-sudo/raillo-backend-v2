@@ -26,6 +26,12 @@ public class PaymentValidator {
 
 	private final PaymentRepository paymentRepository;
 
+	public void validateAttemptId(String attemptId) {
+		if (attemptId.length() > 64) {
+			throw new BusinessException(PaymentError.INVALID_PAYMENT_ATTEMPT_ID);
+		}
+	}
+
 	public void validateApprovalAttempt(PaymentAttempt attempt, Long paymentId, String paymentKey) {
 		if (!Objects.equals(attempt.getPaymentId(), paymentId)
 			|| !Objects.equals(attempt.getPaymentKey(), paymentKey)

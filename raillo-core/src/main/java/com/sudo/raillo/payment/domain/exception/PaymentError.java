@@ -31,6 +31,7 @@ public enum PaymentError implements ErrorCode {
 	INVALID_PAYMENT_METHOD("지원하지 않는 결제 수단입니다.", HttpStatus.BAD_REQUEST, "PAYMENT_202"),
 	PAYMENT_KEY_MISMATCH("결제 키가 일치하지 않습니다.", HttpStatus.BAD_REQUEST, "PAYMENT_203"),
 	PAYMENT_ATTEMPT_REQUEST_MISMATCH("결제 시도 정보가 요청과 일치하지 않습니다.", HttpStatus.CONFLICT, "PAYMENT_204"),
+	INVALID_PAYMENT_ATTEMPT_ID("결제 시도 ID는 64자 이하여야 합니다.", HttpStatus.BAD_REQUEST, "PAYMENT_205"),
 
 	// 시스템 (9xx)
 	PAYMENT_SYSTEM_ERROR("결제 시스템 오류가 발생했습니다.", HttpStatus.INTERNAL_SERVER_ERROR, "PAYMENT_901"),
