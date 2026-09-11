@@ -40,6 +40,12 @@ public class PaymentModifier {
 			.orElseThrow(() -> new BusinessException(PaymentError.PAYMENT_NOT_FOUND));
 	}
 
+	@Transactional(readOnly = true)
+	public PaymentConfirmResult getConfirmResult(Long paymentId) {
+		return paymentRepository.findConfirmResultById(paymentId)
+			.orElseThrow(() -> new BusinessException(PaymentError.PAYMENT_NOT_FOUND));
+	}
+
 	/**
 	 * PaymentKey 저장을 별도 트랜잭션으로 커밋한다. 토스 호출 전 무조건 반영되어야 하므로 REQUIRES_NEW.
 	 */

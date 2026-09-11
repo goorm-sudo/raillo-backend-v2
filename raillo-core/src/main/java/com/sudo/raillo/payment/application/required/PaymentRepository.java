@@ -3,6 +3,7 @@ package com.sudo.raillo.payment.application.required;
 import java.util.Optional;
 
 import com.sudo.raillo.order.domain.Order;
+import com.sudo.raillo.payment.application.PaymentConfirmResult;
 import com.sudo.raillo.payment.domain.Payment;
 import com.sudo.raillo.payment.domain.PaymentStatus;
 
@@ -16,6 +17,9 @@ public interface PaymentRepository {
 	Payment save(Payment payment);
 
 	Optional<Payment> findById(Long paymentId);
+
+	/** 이미 로딩한 엔티티 대신 DB의 현재 커밋 상태로 승인 결과를 조회한다. */
+	Optional<PaymentConfirmResult> findConfirmResultById(Long paymentId);
 
 	Optional<Payment> findByPaymentKey(String paymentKey);
 

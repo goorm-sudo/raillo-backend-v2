@@ -152,7 +152,8 @@ public class PaymentConfirmService implements PaymentConfirmer {
 			case SUCCEEDED -> {
 				log.info("[결제 재요청 - SUCCEEDED attempt 재사용] attemptId={}, paymentId={}",
 					existing.getAttemptId(), payment.getId());
-				yield PaymentConfirmResult.from(payment);
+				// READ_COMMITTED여도 이미 읽은 Payment 객체는 갱신되지 않으므로 DB에서 결과를 직접 조회한다.
+				yield paymentModifier.getConfirmResult(payment.getId());
 			}
 			case FAILED -> throw new BusinessException(PaymentError.PAYMENT_ATTEMPT_ALREADY_FAILED);
 			case IN_PROGRESS -> throw new BusinessException(PaymentError.PAYMENT_ATTEMPT_IN_PROGRESS);

@@ -12,6 +12,10 @@ import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import com.sudo.raillo.common.exception.BusinessException;
 import com.sudo.raillo.member.domain.Member;
@@ -25,6 +29,7 @@ import com.sudo.raillo.payment.domain.Payment;
 import com.sudo.raillo.payment.domain.PaymentAttempt;
 import com.sudo.raillo.payment.domain.PaymentAttemptStatus;
 import com.sudo.raillo.payment.domain.PaymentStatus;
+import com.sudo.raillo.payment.domain.PaymentMethod;
 import com.sudo.raillo.support.annotation.ServiceTest;
 import com.sudo.raillo.support.fixture.MemberFixture;
 import com.sudo.raillo.support.helper.OrderTestHelper;
@@ -36,7 +41,8 @@ import com.sudo.raillo.support.helper.TrainTestHelper;
 class PaymentConfirmRetryTest {
 
 	@Autowired private PaymentConfirmer paymentConfirmer;
-	@Autowired private PaymentRepository paymentRepository;
+	@MockitoSpyBean private PaymentRepository paymentRepository;
+	@Autowired private PlatformTransactionManager transactionManager;
 	@Autowired private PaymentAttemptRepository attemptRepository;
 	@Autowired private MemberRepository memberRepository;
 	@Autowired private OrderTestHelper orderTestHelper;
@@ -102,6 +108,36 @@ class PaymentConfirmRetryTest {
 		assertThatThrownBy(() -> paymentConfirmer.confirm(command, member.getMemberDetail().getMemberNo()))
 			.isInstanceOf(BusinessException.class)
 			.hasMessage("결제 시도 정보가 요청과 일치하지 않습니다.");
+		verify(tossPaymentClient, never()).confirmPayment(any());
+	}
+
+	@Test
+	@DisplayName("Payment 조회 후 다른 트랜잭션이 승인을 확정하면 재요청은 최신 결제 결과를 반환한다")
+	void returns_committed_result_when_payment_was_loaded_before_approval() {
+		// given: 재요청이 Payment를 읽은 직후 첫 요청의 확정 커밋이 발생하도록 순서를 고정한다.
+		PaymentAttempt attempt = saveAttempt(payment.getId(), PaymentAttemptStatus.IN_PROGRESS);
+		TransactionTemplate independent = new TransactionTemplate(transactionManager);
+		independent.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+		doAnswer(invocation -> {
+			Payment loaded = (Payment) ((java.util.Optional<?>) invocation.callRealMethod()).orElseThrow();
+			independent.executeWithoutResult(status -> {
+				Payment committed = paymentRepository.findById(payment.getId()).orElseThrow();
+				committed.updatePaymentKey("original-key");
+				committed.approve(PaymentMethod.CREDIT_CARD);
+				attemptRepository.findById(attempt.getId()).orElseThrow().markSucceeded();
+			});
+			assertThat(loaded.getPaymentStatus()).isEqualTo(PaymentStatus.PENDING);
+			return java.util.Optional.of(loaded);
+		}).when(paymentRepository).findByOrder(any(Order.class));
+
+		// when
+		PaymentConfirmResult result = paymentConfirmer.confirm(command("original-key"), member.getMemberDetail().getMemberNo());
+
+		// then
+		assertThat(result.paymentStatus()).isEqualTo(PaymentStatus.PAID);
+		assertThat(result.paymentKey()).isEqualTo("original-key");
+		assertThat(result.paymentMethod()).isEqualTo(PaymentMethod.CREDIT_CARD);
+		assertThat(result.paidAt()).isNotNull();
 		verify(tossPaymentClient, never()).confirmPayment(any());
 	}
 
