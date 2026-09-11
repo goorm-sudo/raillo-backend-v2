@@ -35,11 +35,17 @@ import com.sudo.raillo.payment.application.PaymentConfirmCommand;
 import com.sudo.raillo.payment.application.PaymentConfirmResult;
 import com.sudo.raillo.payment.application.PaymentPrepareCommand;
 import com.sudo.raillo.payment.application.PaymentPrepareResult;
+import java.time.LocalDateTime;
+
 import com.sudo.raillo.payment.application.required.PaymentAttemptRepository;
+import com.sudo.raillo.payment.application.required.PaymentOutboxRepository;
 import com.sudo.raillo.payment.domain.Payment;
 import com.sudo.raillo.payment.domain.PaymentAttempt;
 import com.sudo.raillo.payment.domain.PaymentAttemptStatus;
 import com.sudo.raillo.payment.domain.PaymentAttemptType;
+import com.sudo.raillo.payment.domain.PaymentOutbox;
+import com.sudo.raillo.payment.domain.PaymentOutboxStatus;
+import com.sudo.raillo.payment.domain.PaymentOutboxType;
 import com.sudo.raillo.payment.domain.PaymentStatus;
 import com.sudo.raillo.payment.domain.PaymentMethod;
 import com.sudo.raillo.payment.domain.exception.PaymentError;
@@ -96,6 +102,9 @@ class PaymentConfirmServiceTest {
 
 	@Autowired
 	private PaymentAttemptRepository paymentAttemptRepository;
+
+	@Autowired
+	private PaymentOutboxRepository paymentOutboxRepository;
 
 	private Member member;
 	private String memberNo;
@@ -220,6 +229,42 @@ class PaymentConfirmServiceTest {
 		// 바깥 트랜잭션은 롤백되었으므로 Order는 PENDING 상태 그대로
 		Order savedOrder = orderRepository.findByOrderCode(preparedResult.orderCode()).orElseThrow();
 		assertThat(savedOrder.getOrderStatus()).isEqualTo(OrderStatus.PENDING);
+	}
+
+	@Test
+	@DisplayName("결제 승인 성공 시 attempt는 SUCCEEDED, payment_outbox에 BOOKING_CONFIRMED 행이 저장된다")
+	void confirmPayment_whenSucceeded_marksAttemptSucceededAndInsertsOutbox() {
+		// given
+		BigDecimal amount = BigDecimal.valueOf(50000);
+		String paymentKey = "toss_pk_success_outbox";
+		String attemptId = "attempt-success-1";
+
+		PendingBooking pendingBooking = createPendingBookingWithHold(amount);
+		PaymentPrepareResult preparedResult = paymentPreparer.prepare(
+			new PaymentPrepareCommand(List.of(pendingBooking.getId())), memberNo);
+
+		TossPaymentConfirmResponse tossResponse = new TossPaymentConfirmResponse(
+			paymentKey, preparedResult.orderCode(), "카드", amount.longValue(), "DONE");
+		given(tossPaymentClient.confirmPayment(any(PaymentConfirmCommand.class)))
+			.willReturn(tossResponse);
+
+		PaymentConfirmCommand confirmRequest = new PaymentConfirmCommand(
+			paymentKey, preparedResult.orderCode(), amount, attemptId);
+
+		// when
+		PaymentConfirmResult confirmedResult = paymentConfirmer.confirm(confirmRequest, memberNo);
+
+		// then - attempt SUCCEEDED
+		PaymentAttempt attempt = paymentAttemptRepository.findByAttemptId(attemptId).orElseThrow();
+		assertThat(attempt.getStatus()).isEqualTo(PaymentAttemptStatus.SUCCEEDED);
+
+		// then - outbox에 BOOKING_CONFIRMED PENDING 행 존재
+		String dedupKey = "payment:%d:booking-confirmed".formatted(confirmedResult.paymentId());
+		PaymentOutbox outbox = paymentOutboxRepository.findByDeduplicationKey(dedupKey).orElseThrow();
+		assertThat(outbox.getType()).isEqualTo(PaymentOutboxType.BOOKING_CONFIRMED);
+		assertThat(outbox.getStatus()).isEqualTo(PaymentOutboxStatus.PENDING);
+		assertThat(outbox.getAggregateId()).isEqualTo(confirmedResult.paymentId());
+		assertThat(outbox.getPayload()).contains(pendingBooking.getId());
 	}
 
 	@Test

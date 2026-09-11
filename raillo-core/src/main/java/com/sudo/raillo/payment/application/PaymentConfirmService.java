@@ -7,7 +7,11 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
+
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 
 import com.sudo.raillo.booking.domain.PendingBooking;
 import com.sudo.raillo.booking.exception.BookingError;
@@ -18,13 +22,18 @@ import com.sudo.raillo.payment.application.provided.PaymentConfirmer;
 import com.sudo.raillo.payment.application.required.BookingCreator;
 import com.sudo.raillo.payment.application.required.MemberFinder;
 import com.sudo.raillo.payment.application.required.OrderReader;
+import com.sudo.raillo.payment.application.required.PaymentAttemptRepository;
 import com.sudo.raillo.payment.application.required.PaymentGateway;
 import com.sudo.raillo.payment.application.required.PaymentGateway.GatewayConfirmResult;
+import com.sudo.raillo.payment.application.required.PaymentOutboxRepository;
 import com.sudo.raillo.payment.application.required.PendingBookingReader;
 import com.sudo.raillo.payment.application.required.SeatHoldReleaser;
 import com.sudo.raillo.payment.application.required.TrainScheduleReader;
 import com.sudo.raillo.payment.application.required.TrainSeatReader;
 import com.sudo.raillo.payment.domain.Payment;
+import com.sudo.raillo.payment.domain.PaymentAttempt;
+import com.sudo.raillo.payment.domain.PaymentOutbox;
+import com.sudo.raillo.payment.domain.exception.PaymentError;
 import com.sudo.raillo.payment.domain.exception.TossPaymentException;
 import com.sudo.raillo.train.domain.ScheduleStop;
 
@@ -49,6 +58,8 @@ public class PaymentConfirmService implements PaymentConfirmer {
 	private final PaymentModifier paymentModifier;
 	private final PaymentValidator paymentValidator;
 	private final PaymentAttemptManager paymentAttemptManager;
+	private final PaymentAttemptRepository paymentAttemptRepository;
+	private final PaymentOutboxRepository paymentOutboxRepository;
 	private final PaymentGateway paymentGateway;
 	private final OrderReader orderReader;
 	private final MemberFinder memberFinder;
@@ -57,9 +68,13 @@ public class PaymentConfirmService implements PaymentConfirmer {
 	private final SeatHoldReleaser seatHoldReleaser;
 	private final TrainScheduleReader trainScheduleReader;
 	private final TrainSeatReader trainSeatReader;
+	private final ObjectMapper objectMapper;
 
 	@Override
+	@Transactional(isolation = Isolation.READ_COMMITTED)
 	public PaymentConfirmResult confirm(PaymentConfirmCommand command, String memberNo) {
+		// READ_COMMITTED: PaymentAttemptManager가 REQUIRES_NEW로 커밋한 attempt를 이 트랜잭션에서
+		// findById로 조회해야 하는데, MySQL 기본 REPEATABLE_READ 스냅샷은 커밋 이후 row를 보지 못한다.
 		PaymentConfirmCommand normalizedCommand = command.withGeneratedAttemptIdIfMissing();
 		log.info("[결제 승인 시작] orderId={}, paymentKey={}, amount={}, attemptId={}",
 			normalizedCommand.orderId(), normalizedCommand.paymentKey(),
@@ -100,10 +115,28 @@ public class PaymentConfirmService implements PaymentConfirmer {
 		order.completePayment();
 		bookingCreator.createBookingFromOrder(order);
 		payment.approve(result.method());
+
+		PaymentAttempt attempt = paymentAttemptRepository.findById(attemptDbId)
+			.orElseThrow(() -> new BusinessException(PaymentError.PAYMENT_ATTEMPT_NOT_FOUND));
+		attempt.markSucceeded();
+
+		paymentOutboxRepository.save(buildBookingConfirmedOutbox(payment, pendingBookings));
+
 		cleanupPendingBookings(pendingBookings);
 
 		log.info("[결제 승인 완료] paymentId={}, orderCode={}", payment.getId(), normalizedCommand.orderId());
 		return PaymentConfirmResult.from(payment);
+	}
+
+	private PaymentOutbox buildBookingConfirmedOutbox(Payment payment, List<PendingBooking> pendingBookings) {
+		String dedupKey = "payment:%d:booking-confirmed".formatted(payment.getId());
+		BookingConfirmedPayload payload = BookingConfirmedPayload.from(pendingBookings);
+		try {
+			String payloadJson = objectMapper.writeValueAsString(payload);
+			return PaymentOutbox.forBookingConfirmed(payment.getId(), dedupKey, payloadJson);
+		} catch (JacksonException e) {
+			throw new BusinessException(PaymentError.PAYMENT_OUTBOX_PAYLOAD_SERIALIZATION_FAILED);
+		}
 	}
 
 	private List<PendingBooking> validateAndGetPendingBookings(Order order, String memberNo) {
