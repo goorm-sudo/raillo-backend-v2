@@ -73,44 +73,44 @@ public class PaymentConfirmService implements PaymentConfirmer {
 	@Override
 	@Transactional(isolation = Isolation.READ_COMMITTED)
 	public PaymentConfirmResult confirm(PaymentConfirmCommand command, String memberNo) {
-		// READ_COMMITTED: PaymentAttemptManager가 REQUIRES_NEW로 커밋한 attempt를 이 트랜잭션에서
-		// findById로 조회해야 하는데, MySQL 기본 REPEATABLE_READ 스냅샷은 커밋 이후 row를 보지 못한다.
-		PaymentConfirmCommand normalizedCommand = command.withGeneratedAttemptIdIfMissing();
+		// MySQL의 REPEATABLE_READ에서는 첫 일반 조회(Order 조회) 시점의 스냅샷을 다른 테이블 조회에도 사용한다.
+		// 따라서 이후 PaymentAttemptManager가 REQUIRES_NEW로 저장·커밋한 attempt는 findById로 조회되지 않는다.
+		// 일반 조회마다 새 스냅샷을 사용하는 READ_COMMITTED로 설정해, 별도 트랜잭션에서 커밋한 attempt를 읽는다.
+		String attemptId = command.attemptIdOrDerived();
 		log.info("[결제 승인 시작] orderId={}, paymentKey={}, amount={}, attemptId={}",
-			normalizedCommand.orderId(), normalizedCommand.paymentKey(),
-			normalizedCommand.amount(), normalizedCommand.attemptId());
+			command.orderId(), command.paymentKey(), command.amount(), attemptId);
 
-		Order order = orderReader.getOrderByOrderCode(normalizedCommand.orderId());
+		Order order = orderReader.getOrderByOrderCode(command.orderId());
 		List<PendingBooking> pendingBookings = validateAndGetPendingBookings(order, memberNo);
 		Member member = memberFinder.getMemberByMemberNo(memberNo);
 		Payment payment = paymentModifier.getPaymentByOrder(order);
 
 		orderReader.validateOrderOwner(order, member);
 		paymentValidator.validatePaymentOwner(payment, member);
-		paymentValidator.validateAmounts(normalizedCommand.amount(), order.getTotalAmount(), payment.getAmount());
+		paymentValidator.validateAmounts(command.amount(), order.getTotalAmount(), payment.getAmount());
 		paymentValidator.validateDuplicatePayment(order);
 
-		paymentModifier.updatePaymentKeyInNewTransaction(payment.getId(), normalizedCommand.paymentKey());
+		paymentModifier.updatePaymentKeyInNewTransaction(payment.getId(), command.paymentKey());
 		// REQUIRES_NEW로 별도 커밋된 paymentKey를 바깥 트랜잭션 엔티티에도 동기화
 		// (미동기화 시 바깥 트랜잭션 커밋 때 Hibernate가 paymentKey=null로 덮어씀)
-		payment.updatePaymentKey(normalizedCommand.paymentKey());
+		payment.updatePaymentKey(command.paymentKey());
 
 		Long attemptDbId = paymentAttemptManager.startApprovalInNewTransaction(
-			payment.getId(), normalizedCommand.attemptId(), normalizedCommand.paymentKey()
+			payment.getId(), attemptId, command.paymentKey()
 		);
 
 		GatewayConfirmResult result;
 		try {
-			result = paymentGateway.confirm(normalizedCommand);
+			result = paymentGateway.confirm(command);
 		} catch (TossPaymentException e) {
 			paymentAttemptManager.markFailedInNewTransaction(attemptDbId, e.getErrorCode(), e.getMessage());
 			paymentModifier.failPaymentInNewTransaction(payment.getId(), e.getErrorCode(), e.getMessage());
 			log.info("[게이트웨이 결제 승인 실패] orderCode={}, httpStatus={}, code={}, message={}",
-				normalizedCommand.orderId(), e.getHttpStatus(), e.getErrorCode(), e.getMessage());
+				command.orderId(), e.getHttpStatus(), e.getErrorCode(), e.getMessage());
 			throw e;
 		}
 
-		paymentValidator.validateGatewayResponseMatchesRequest(result, normalizedCommand);
+		paymentValidator.validateGatewayResponseMatchesRequest(result, command);
 
 		order.completePayment();
 		bookingCreator.createBookingFromOrder(order);
@@ -124,7 +124,7 @@ public class PaymentConfirmService implements PaymentConfirmer {
 
 		cleanupPendingBookings(pendingBookings);
 
-		log.info("[결제 승인 완료] paymentId={}, orderCode={}", payment.getId(), normalizedCommand.orderId());
+		log.info("[결제 승인 완료] paymentId={}, orderCode={}", payment.getId(), command.orderId());
 		return PaymentConfirmResult.from(payment);
 	}
 

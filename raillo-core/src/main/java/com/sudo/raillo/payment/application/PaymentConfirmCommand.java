@@ -1,7 +1,6 @@
 package com.sudo.raillo.payment.application;
 
 import java.math.BigDecimal;
-import java.util.UUID;
 
 public record PaymentConfirmCommand(
 	String paymentKey,
@@ -13,10 +12,14 @@ public record PaymentConfirmCommand(
 		this(paymentKey, orderId, amount, null);
 	}
 
-	public PaymentConfirmCommand withGeneratedAttemptIdIfMissing() {
-		if (attemptId == null || attemptId.isBlank()) {
-			return new PaymentConfirmCommand(paymentKey, orderId, amount, UUID.randomUUID().toString());
+	/**
+	 * 클라이언트가 attemptId를 명시했으면 그 값을, 없으면 paymentKey에서 파생한 값을 반환한다.
+	 * 파생 규칙은 {@link PaymentAttemptIds#forApproval(String)}에 있다.
+	 */
+	public String attemptIdOrDerived() {
+		if (attemptId != null && !attemptId.isBlank()) {
+			return attemptId;
 		}
-		return this;
+		return PaymentAttemptIds.forApproval(paymentKey);
 	}
 }
