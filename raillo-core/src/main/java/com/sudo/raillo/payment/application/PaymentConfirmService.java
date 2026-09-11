@@ -96,7 +96,7 @@ public class PaymentConfirmService implements PaymentConfirmer {
 		// (성공한 flow에서는 PendingBooking이 이미 정리됐을 수 있어 재조회 시 만료 예외가 난다.)
 		Optional<PaymentAttempt> existingAttempt = paymentAttemptRepository.findByAttemptId(attemptId);
 		if (existingAttempt.isPresent()) {
-			return handleExistingAttempt(existingAttempt.get(), payment);
+			return handleExistingAttempt(existingAttempt.get(), payment, command);
 		}
 
 		List<PendingBooking> pendingBookings = validateAndGetPendingBookings(order, memberNo);
@@ -146,7 +146,8 @@ public class PaymentConfirmService implements PaymentConfirmer {
 		return PaymentConfirmResult.from(payment);
 	}
 
-	private PaymentConfirmResult handleExistingAttempt(PaymentAttempt existing, Payment payment) {
+	private PaymentConfirmResult handleExistingAttempt(PaymentAttempt existing, Payment payment, PaymentConfirmCommand command) {
+		paymentValidator.validateApprovalAttempt(existing, payment.getId(), command.paymentKey());
 		return switch (existing.getStatus()) {
 			case SUCCEEDED -> {
 				log.info("[결제 재요청 - SUCCEEDED attempt 재사용] attemptId={}, paymentId={}",

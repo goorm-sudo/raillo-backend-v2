@@ -1,6 +1,7 @@
 package com.sudo.raillo.payment.application;
 
 import java.math.BigDecimal;
+import java.util.Objects;
 
 import org.springframework.stereotype.Component;
 
@@ -10,6 +11,8 @@ import com.sudo.raillo.order.domain.Order;
 import com.sudo.raillo.payment.application.required.PaymentGateway.GatewayConfirmResult;
 import com.sudo.raillo.payment.application.required.PaymentRepository;
 import com.sudo.raillo.payment.domain.Payment;
+import com.sudo.raillo.payment.domain.PaymentAttempt;
+import com.sudo.raillo.payment.domain.PaymentAttemptType;
 import com.sudo.raillo.payment.domain.PaymentStatus;
 import com.sudo.raillo.payment.domain.exception.PaymentError;
 
@@ -22,6 +25,14 @@ import lombok.extern.slf4j.Slf4j;
 public class PaymentValidator {
 
 	private final PaymentRepository paymentRepository;
+
+	public void validateApprovalAttempt(PaymentAttempt attempt, Long paymentId, String paymentKey) {
+		if (!Objects.equals(attempt.getPaymentId(), paymentId)
+			|| !Objects.equals(attempt.getPaymentKey(), paymentKey)
+			|| attempt.getAttemptType() != PaymentAttemptType.APPROVAL) {
+			throw new BusinessException(PaymentError.PAYMENT_ATTEMPT_REQUEST_MISMATCH);
+		}
+	}
 
 	public void validatePaymentOwner(Payment payment, Member member) {
 		if (!payment.getMember().getId().equals(member.getId())) {
