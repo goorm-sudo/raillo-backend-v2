@@ -103,7 +103,20 @@ Toss 호출 직전에 `IN_PROGRESS`로 INSERT. 이 row가 있으면 `PaymentReco
 - **클라이언트 Idempotency-Key와의 연결.** 이슈 #260에서 클라이언트가 보내는 `Idempotency-Key` 헤더를 그대로 `attempt_id`에 저장하면 API 계층의 중복 방지와 도메인 계층의 시도 관리가 하나의 키로 이어진다.
 - **관심사 분리.** `payment_key`는 Toss가 발급하는 외부 시스템 키, `attempt_id`는 우리 도메인의 시도 참조 키다. 하나로 뭉치면 PG 교체나 시도 이력 확장 시 스키마 변경 범위가 커진다.
 
-현재 코드에는 명시적 재시도와 Idempotency-Key 헤더가 없어 세 이유 모두 잠재적이다. 컬럼 사후 추가는 마이그레이션 부담이 크므로 처음부터 두고 시작한다.
+현재 승인 API는 요청 body의 `attemptId`를 사용하며, 생략 시 `SHA-256("apv:" + paymentKey)`의
+64자리 16진수 문자열을 사용한다. Idempotency-Key 헤더 연동은 #260 범위다.
+
+#### 승인 재요청과 동시 실행 방어
+
+- 같은 attemptId는 `paymentId`, `paymentKey`, `APPROVAL` 타입까지 일치해야 재사용할 수 있다. 불일치하면 `PAYMENT_204`, 64자를 초과한 입력은 API 검증 또는 애플리케이션의 `PAYMENT_205`로 거절한다.
+- 성공한 시도는 DB에서 승인 결과 DTO를 직접 조회한다. 이미 로딩한 Payment 엔티티를 그대로 반환하지 않으므로, 다른 트랜잭션이 방금 승인한 결과도 반영한다. 최초 응답을 저장·재생하는 방식은 아니며 환불 등 이후 상태 변경도 반영한다.
+- `PaymentAttemptManager.startApprovalInNewTransaction`은 짧은 `REQUIRES_NEW` 트랜잭션에서 Payment 행을 잠그고, 기존 승인 시도와 승인 가능 상태를 확인한 뒤 paymentKey 갱신과 attempt INSERT를 함께 커밋한다. 잠금은 Toss 호출 전에 해제한다.
+- 반환값 `PaymentAttemptStartResult.created`가 true인 호출만 승인 API를 실행한다. 동일 시도의 재사용은 false로 반환하며, 다른 attemptId를 보내도 진행 중이거나 실패한 기존 승인을 우회할 수 없다.
+- 실패한 결제를 재시도하려면 새 주문·결제를 준비한다. 기존 Payment가 FAILED/CANCELLED/REFUNDED이면 외부 호출 전에 거절한다.
+- INSERT/커밋 무결성 오류 뒤에는 실제 동일 attempt의 존재와 요청 일치를 확인한다. 다른 제약 위반은 원래 오류로 전파하고 paymentKey와 attempt를 함께 롤백한다.
+
+Task 10의 Recovery는 새 승인을 시작하지 않고 기존 IN_PROGRESS를 확정해야 한다.
+복구와 승인 확정이 경합하는 경우의 상태 재검증·처리 권한 확보도 해당 Task에서 검증한다.
 
 ### payment_outbox
 

@@ -2,11 +2,10 @@ package com.sudo.raillo.payment.application;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-
-import java.util.Optional;
 
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -47,8 +46,8 @@ import lombok.extern.slf4j.Slf4j;
  * 결제 승인 유스케이스.
  *
  * <p>1. Order/Payment/PendingBooking/Member 조회 및 검증
- * <p>2. PaymentAttempt를 IN_PROGRESS로 저장 (REQUIRES_NEW)
- * <p>3. PaymentKey를 별도 트랜잭션으로 저장 후 게이트웨이 승인 API 호출
+ * <p>2. Payment 잠금 아래 PaymentKey와 IN_PROGRESS attempt를 함께 저장 (REQUIRES_NEW)
+ * <p>3. 새 attempt를 생성한 호출만 게이트웨이 승인 API 호출
  * <p>4. 실패 시 attempt와 payment를 FAILED로 마킹 후 예외 전파
  * <p>5. 성공 시 Order 완료 → Booking 생성 → Payment 승인 → PendingBooking/Seat Hold 정리
  */
@@ -92,7 +91,7 @@ public class PaymentConfirmService implements PaymentConfirmer {
 		paymentValidator.validatePaymentOwner(payment, member);
 		paymentValidator.validateAmounts(command.amount(), order.getTotalAmount(), payment.getAmount());
 
-		// 같은 attemptId로 재요청이 왔다면 상태에 따라 이전 결과 반환하거나 예외 던지고 조기 종료한다.
+		// 같은 attemptId로 재요청이 왔다면 상태에 따라 이전 결과를 반환하거나 예외를 던지고 조기 종료한다.
 		// PendingBooking 조회보다 먼저 처리해야 SUCCEEDED 재요청도 정상 응답한다.
 		// (성공한 flow에서는 PendingBooking이 이미 정리됐을 수 있어 재조회 시 만료 예외가 난다.)
 		Optional<PaymentAttempt> existingAttempt = paymentAttemptRepository.findByAttemptId(attemptId);
@@ -101,6 +100,7 @@ public class PaymentConfirmService implements PaymentConfirmer {
 		}
 
 		paymentValidator.validateApprovable(payment);
+		// TODO(#257 Task 8, 12): 인라인 cleanup 제거 후, 이 조회 직전 다른 요청이 승인을 확정하는 경로도 검증한다.
 		List<PendingBooking> pendingBookings = validateAndGetPendingBookings(order, memberNo);
 		paymentValidator.validateDuplicatePayment(order);
 
@@ -124,6 +124,8 @@ public class PaymentConfirmService implements PaymentConfirmer {
 		payment.updatePaymentKey(command.paymentKey());
 
 		GatewayConfirmResult result;
+		// TODO(#257 Task 10): 응답 유실·타임아웃은 IN_PROGRESS로 유지하고 Recovery Worker가 Toss 조회로 확정한다.
+		// Toss 승인 후 아래 DB 확정/커밋이 실패한 경우도 같은 attempt를 복구하며, 승인 API를 재호출하지 않는다.
 		try {
 			result = paymentGateway.confirm(command);
 		} catch (TossPaymentException e) {
@@ -162,6 +164,7 @@ public class PaymentConfirmService implements PaymentConfirmer {
 				yield paymentModifier.getConfirmResult(payment.getId());
 			}
 			case FAILED -> throw new BusinessException(PaymentError.PAYMENT_ATTEMPT_ALREADY_FAILED);
+			// TODO(#257 Task 10, 12): 오래된 IN_PROGRESS의 대사/롤포워드/보상과 복구 후 재요청을 통합 검증한다.
 			case IN_PROGRESS -> throw new BusinessException(PaymentError.PAYMENT_ATTEMPT_IN_PROGRESS);
 		};
 	}
@@ -187,6 +190,8 @@ public class PaymentConfirmService implements PaymentConfirmer {
 	}
 
 	private void cleanupPendingBookings(List<PendingBooking> pendingBookings) {
+		// TODO(#257 Task 8, 9): 이 메서드와 호출을 제거하고 outbox 처리·재시도·최대 시도 초과 처리를 Worker로 옮긴다.
+		// PR 2의 처리기는 NoOp이며, 실제 Redis 정리는 새 스키마 확정 후 별도 이슈에서 구현한다.
 		List<String> pendingBookingIds = pendingBookings.stream()
 			.map(PendingBooking::getId)
 			.toList();
@@ -197,7 +202,7 @@ public class PaymentConfirmService implements PaymentConfirmer {
 		} catch (Exception e) {
 			// Payment는 이미 approve된 상태이므로 정리 실패로 트랜잭션을 롤백해선 안 된다.
 			// 로그만 남기고 지나가면 PendingBooking과 Redis Hold는 TTL(seat-hold-architecture Lazy Cleanup)로 회수된다.
-			// TODO(#254 후속): 승인 완료 이벤트 발행 + 아웃박스로 신뢰성 있는 정리 처리로 전환.
+			// TODO(#257 Task 8): 위 인라인 정리 전체를 outbox 처리로 이관한다.
 			log.error("[PendingBooking 삭제 실패] error={}", e.getMessage(), e);
 		}
 
