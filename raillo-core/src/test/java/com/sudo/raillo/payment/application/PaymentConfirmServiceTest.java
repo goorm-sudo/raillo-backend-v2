@@ -35,7 +35,11 @@ import com.sudo.raillo.payment.application.PaymentConfirmCommand;
 import com.sudo.raillo.payment.application.PaymentConfirmResult;
 import com.sudo.raillo.payment.application.PaymentPrepareCommand;
 import com.sudo.raillo.payment.application.PaymentPrepareResult;
+import com.sudo.raillo.payment.application.required.PaymentAttemptRepository;
 import com.sudo.raillo.payment.domain.Payment;
+import com.sudo.raillo.payment.domain.PaymentAttempt;
+import com.sudo.raillo.payment.domain.PaymentAttemptStatus;
+import com.sudo.raillo.payment.domain.PaymentAttemptType;
 import com.sudo.raillo.payment.domain.PaymentStatus;
 import com.sudo.raillo.payment.domain.PaymentMethod;
 import com.sudo.raillo.payment.domain.exception.PaymentError;
@@ -89,6 +93,9 @@ class PaymentConfirmServiceTest {
 
 	@Autowired
 	private SeatHoldRepository seatHoldRepository;
+
+	@Autowired
+	private PaymentAttemptRepository paymentAttemptRepository;
 
 	private Member member;
 	private String memberNo;
@@ -213,6 +220,37 @@ class PaymentConfirmServiceTest {
 		// 바깥 트랜잭션은 롤백되었으므로 Order는 PENDING 상태 그대로
 		Order savedOrder = orderRepository.findByOrderCode(preparedResult.orderCode()).orElseThrow();
 		assertThat(savedOrder.getOrderStatus()).isEqualTo(OrderStatus.PENDING);
+	}
+
+	@Test
+	@DisplayName("Toss 승인 실패 시 PaymentAttempt가 FAILED로 기록된다")
+	void confirmPayment_whenTossFails_marksAttemptFailed() {
+		// given
+		BigDecimal amount = BigDecimal.valueOf(50000);
+		String paymentKey = "toss_pk_attempt_fail";
+		String attemptId = "attempt-fail-test-1";
+
+		PendingBooking pendingBooking = createPendingBookingWithHold(amount);
+		PaymentPrepareResult preparedResult = paymentPreparer.prepare(
+			new PaymentPrepareCommand(List.of(pendingBooking.getId())), memberNo);
+
+		given(tossPaymentClient.confirmPayment(any(PaymentConfirmCommand.class)))
+			.willThrow(new TossPaymentException(400, "REJECT_CARD_PAYMENT", "카드 승인 거절"));
+
+		PaymentConfirmCommand confirmRequest = new PaymentConfirmCommand(
+			paymentKey, preparedResult.orderCode(), amount, attemptId);
+
+		// when
+		assertThatThrownBy(() -> paymentConfirmer.confirm(confirmRequest, memberNo))
+			.isInstanceOf(TossPaymentException.class);
+
+		// then - attempt는 REQUIRES_NEW로 저장되므로 outer 롤백과 무관하게 FAILED로 남는다
+		PaymentAttempt attempt = paymentAttemptRepository.findByAttemptId(attemptId).orElseThrow();
+		assertThat(attempt.getStatus()).isEqualTo(PaymentAttemptStatus.FAILED);
+		assertThat(attempt.getErrorCode()).isEqualTo("REJECT_CARD_PAYMENT");
+		assertThat(attempt.getErrorMessage()).isEqualTo("카드 승인 거절");
+		assertThat(attempt.getAttemptType()).isEqualTo(PaymentAttemptType.APPROVAL);
+		assertThat(attempt.getPaymentKey()).isEqualTo(paymentKey);
 	}
 
 	@Test

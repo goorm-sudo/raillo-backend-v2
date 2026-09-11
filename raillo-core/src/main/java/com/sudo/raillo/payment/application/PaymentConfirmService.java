@@ -35,9 +35,10 @@ import lombok.extern.slf4j.Slf4j;
  * 결제 승인 유스케이스.
  *
  * <p>1. Order/Payment/PendingBooking/Member 조회 및 검증
- * <p>2. PaymentKey를 별도 트랜잭션으로 저장 후 게이트웨이 승인 API 호출
- * <p>3. 실패 시 실패 정보 저장 후 예외 전파
- * <p>4. 성공 시 Order 완료 → Booking 생성 → Payment 승인 → PendingBooking/Seat Hold 정리
+ * <p>2. PaymentAttempt를 IN_PROGRESS로 저장 (REQUIRES_NEW)
+ * <p>3. PaymentKey를 별도 트랜잭션으로 저장 후 게이트웨이 승인 API 호출
+ * <p>4. 실패 시 attempt와 payment를 FAILED로 마킹 후 예외 전파
+ * <p>5. 성공 시 Order 완료 → Booking 생성 → Payment 승인 → PendingBooking/Seat Hold 정리
  */
 @Slf4j
 @Service
@@ -47,6 +48,7 @@ public class PaymentConfirmService implements PaymentConfirmer {
 
 	private final PaymentModifier paymentModifier;
 	private final PaymentValidator paymentValidator;
+	private final PaymentAttemptManager paymentAttemptManager;
 	private final PaymentGateway paymentGateway;
 	private final OrderReader orderReader;
 	private final MemberFinder memberFinder;
@@ -58,42 +60,49 @@ public class PaymentConfirmService implements PaymentConfirmer {
 
 	@Override
 	public PaymentConfirmResult confirm(PaymentConfirmCommand command, String memberNo) {
-		log.info("[결제 승인 시작] orderId={}, paymentKey={}, amount={}",
-			command.orderId(), command.paymentKey(), command.amount());
+		PaymentConfirmCommand normalizedCommand = command.withGeneratedAttemptIdIfMissing();
+		log.info("[결제 승인 시작] orderId={}, paymentKey={}, amount={}, attemptId={}",
+			normalizedCommand.orderId(), normalizedCommand.paymentKey(),
+			normalizedCommand.amount(), normalizedCommand.attemptId());
 
-		Order order = orderReader.getOrderByOrderCode(command.orderId());
+		Order order = orderReader.getOrderByOrderCode(normalizedCommand.orderId());
 		List<PendingBooking> pendingBookings = validateAndGetPendingBookings(order, memberNo);
 		Member member = memberFinder.getMemberByMemberNo(memberNo);
 		Payment payment = paymentModifier.getPaymentByOrder(order);
 
 		orderReader.validateOrderOwner(order, member);
 		paymentValidator.validatePaymentOwner(payment, member);
-		paymentValidator.validateAmounts(command.amount(), order.getTotalAmount(), payment.getAmount());
+		paymentValidator.validateAmounts(normalizedCommand.amount(), order.getTotalAmount(), payment.getAmount());
 		paymentValidator.validateDuplicatePayment(order);
 
-		paymentModifier.updatePaymentKeyInNewTransaction(payment.getId(), command.paymentKey());
+		paymentModifier.updatePaymentKeyInNewTransaction(payment.getId(), normalizedCommand.paymentKey());
 		// REQUIRES_NEW로 별도 커밋된 paymentKey를 바깥 트랜잭션 엔티티에도 동기화
 		// (미동기화 시 바깥 트랜잭션 커밋 때 Hibernate가 paymentKey=null로 덮어씀)
-		payment.updatePaymentKey(command.paymentKey());
+		payment.updatePaymentKey(normalizedCommand.paymentKey());
+
+		Long attemptDbId = paymentAttemptManager.startApprovalInNewTransaction(
+			payment.getId(), normalizedCommand.attemptId(), normalizedCommand.paymentKey()
+		);
 
 		GatewayConfirmResult result;
 		try {
-			result = paymentGateway.confirm(command);
+			result = paymentGateway.confirm(normalizedCommand);
 		} catch (TossPaymentException e) {
+			paymentAttemptManager.markFailedInNewTransaction(attemptDbId, e.getErrorCode(), e.getMessage());
 			paymentModifier.failPaymentInNewTransaction(payment.getId(), e.getErrorCode(), e.getMessage());
 			log.info("[게이트웨이 결제 승인 실패] orderCode={}, httpStatus={}, code={}, message={}",
-				command.orderId(), e.getHttpStatus(), e.getErrorCode(), e.getMessage());
+				normalizedCommand.orderId(), e.getHttpStatus(), e.getErrorCode(), e.getMessage());
 			throw e;
 		}
 
-		paymentValidator.validateGatewayResponseMatchesRequest(result, command);
+		paymentValidator.validateGatewayResponseMatchesRequest(result, normalizedCommand);
 
 		order.completePayment();
 		bookingCreator.createBookingFromOrder(order);
 		payment.approve(result.method());
 		cleanupPendingBookings(pendingBookings);
 
-		log.info("[결제 승인 완료] paymentId={}, orderCode={}", payment.getId(), command.orderId());
+		log.info("[결제 승인 완료] paymentId={}, orderCode={}", payment.getId(), normalizedCommand.orderId());
 		return PaymentConfirmResult.from(payment);
 	}
 
