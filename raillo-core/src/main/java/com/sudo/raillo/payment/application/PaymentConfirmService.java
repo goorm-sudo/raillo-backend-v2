@@ -58,7 +58,9 @@ import lombok.extern.slf4j.Slf4j;
 public class PaymentConfirmService implements PaymentConfirmer {
 
 	private final PaymentModifier paymentModifier;
+	private final PaymentReader paymentReader;
 	private final PaymentValidator paymentValidator;
+	private final PaymentApprovalStarter paymentApprovalStarter;
 	private final PaymentAttemptManager paymentAttemptManager;
 	private final PaymentAttemptRepository paymentAttemptRepository;
 	private final PaymentOutboxRepository paymentOutboxRepository;
@@ -85,7 +87,7 @@ public class PaymentConfirmService implements PaymentConfirmer {
 
 		Order order = orderReader.getOrderByOrderCode(command.orderId());
 		Member member = memberFinder.getMemberByMemberNo(memberNo);
-		Payment payment = paymentModifier.getPaymentByOrder(order);
+		Payment payment = paymentReader.getPaymentByOrder(order);
 
 		orderReader.validateOrderOwner(order, member);
 		paymentValidator.validatePaymentOwner(payment, member);
@@ -106,7 +108,7 @@ public class PaymentConfirmService implements PaymentConfirmer {
 
 		PaymentAttemptStartResult started;
 		try {
-			started = paymentAttemptManager.startApprovalInNewTransaction(
+			started = paymentApprovalStarter.startApprovalInNewTransaction(
 				payment.getId(), attemptId, command.paymentKey()
 			);
 		} catch (DataIntegrityViolationException e) {
@@ -161,7 +163,7 @@ public class PaymentConfirmService implements PaymentConfirmer {
 				log.info("[결제 재요청 - SUCCEEDED attempt 재사용] attemptId={}, paymentId={}",
 					existing.getAttemptId(), payment.getId());
 				// READ_COMMITTED여도 이미 읽은 Payment 객체는 갱신되지 않으므로 DB에서 결과를 직접 조회한다.
-				yield paymentModifier.getConfirmResult(payment.getId());
+				yield paymentReader.getConfirmResult(payment.getId());
 			}
 			case FAILED -> throw new BusinessException(PaymentError.PAYMENT_ATTEMPT_ALREADY_FAILED);
 			// TODO(#257 Task 10, 12): 오래된 IN_PROGRESS의 대사/롤포워드/보상과 복구 후 재요청을 통합 검증한다.

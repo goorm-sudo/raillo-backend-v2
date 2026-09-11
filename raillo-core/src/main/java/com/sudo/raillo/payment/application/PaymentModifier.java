@@ -34,18 +34,6 @@ public class PaymentModifier {
 		return saved;
 	}
 
-	@Transactional(readOnly = true)
-	public Payment getPaymentByOrder(Order order) {
-		return paymentRepository.findByOrder(order)
-			.orElseThrow(() -> new BusinessException(PaymentError.PAYMENT_NOT_FOUND));
-	}
-
-	@Transactional(readOnly = true)
-	public PaymentConfirmResult getConfirmResult(Long paymentId) {
-		return paymentRepository.findConfirmResultById(paymentId)
-			.orElseThrow(() -> new BusinessException(PaymentError.PAYMENT_NOT_FOUND));
-	}
-
 	/**
 	 * 결제 실패 정보를 별도 트랜잭션으로 저장한다. 외부 게이트웨이 실패 시 반드시 반영되어야 하므로 REQUIRES_NEW.
 	 */
