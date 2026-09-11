@@ -98,21 +98,6 @@ class PaymentModifierTest {
 	}
 
 	@Test
-	@DisplayName("PaymentKey가 정상적으로 업데이트된다")
-	void updatePaymentKeyInNewTransaction_success() {
-		// given
-		Payment payment = paymentModifier.createPayment(member, order);
-		String paymentKey = "toss_payment_key_12345";
-
-		// when
-		paymentModifier.updatePaymentKeyInNewTransaction(payment.getId(), paymentKey);
-
-		// then
-		Payment updatedPayment = paymentRepository.findById(payment.getId()).orElseThrow();
-		assertThat(updatedPayment.getPaymentKey()).isEqualTo(paymentKey);
-	}
-
-	@Test
 	@DisplayName("Payment 실패 처리가 정상적으로 수행된다")
 	void failPaymentInNewTransaction_success() {
 		// given

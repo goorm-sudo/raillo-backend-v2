@@ -19,6 +19,8 @@ public interface PaymentAttemptJpaRepository extends JpaRepository<PaymentAttemp
 
 	Optional<PaymentAttempt> findByAttemptId(String attemptId);
 
+	Optional<PaymentAttempt> findFirstByPaymentIdAndAttemptTypeOrderByIdDesc(Long paymentId, PaymentAttemptType type);
+
 	@Query("""
 		select a
 		  from PaymentAttempt a

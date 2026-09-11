@@ -39,6 +39,11 @@ public class PaymentPersistenceAdapter implements PaymentRepository {
 	}
 
 	@Override
+	public Optional<Payment> findByIdForUpdate(Long paymentId) {
+		return jpaRepository.findByIdForUpdate(paymentId);
+	}
+
+	@Override
 	public Optional<Payment> findByOrder(Order order) {
 		return jpaRepository.findByOrder(order);
 	}

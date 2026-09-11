@@ -15,6 +15,8 @@ public interface PaymentAttemptRepository {
 
 	Optional<PaymentAttempt> findByAttemptId(String attemptId);
 
+	Optional<PaymentAttempt> findLatestApprovalByPaymentId(Long paymentId);
+
 	/**
 	 * Recovery Worker가 처리할 후보를 조회한다.
 	 * IN_PROGRESS 상태이면서 updated_at이 임계값보다 오래된 attempt를 반환한다.

@@ -7,12 +7,16 @@ import static org.mockito.BDDMockito.*;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
@@ -610,5 +614,47 @@ class PaymentConfirmServiceTest {
 		verify(tossPaymentClient, never()).confirmPayment(any());
 		assertThat(paymentAttemptRepository.findByAttemptId("new-attempt")).isEmpty();
 		assertThat(paymentRepository.findById(payment.getId()).orElseThrow().getPaymentKey()).isEqualTo("previous-key");
+	}
+
+	@ParameterizedTest
+	@ValueSource(booleans = {true, false})
+	@DisplayName("승인 진행 중 재요청은 attemptId가 같거나 달라도 토스를 다시 호출하지 않는다")
+	void concurrent_confirm_calls_gateway_once(boolean sameAttemptId) throws Exception {
+		// given
+		BigDecimal amount = BigDecimal.valueOf(50000);
+		PendingBooking pendingBooking = createPendingBookingWithHold(amount);
+		PaymentPrepareResult prepared = paymentPreparer.prepare(
+			new PaymentPrepareCommand(List.of(pendingBooking.getId())), memberNo);
+		PaymentConfirmCommand firstCommand = new PaymentConfirmCommand("first-key", prepared.orderCode(), amount, "first-id");
+		PaymentConfirmCommand secondCommand = new PaymentConfirmCommand(
+			sameAttemptId ? "first-key" : "second-key", prepared.orderCode(), amount, sameAttemptId ? "first-id" : "second-id");
+		CountDownLatch gatewayEntered = new CountDownLatch(1);
+		CountDownLatch releaseGateway = new CountDownLatch(1);
+		given(tossPaymentClient.confirmPayment(any())).willAnswer(invocation -> {
+			gatewayEntered.countDown();
+			if (!releaseGateway.await(10, TimeUnit.SECONDS)) {
+				throw new AssertionError("승인 응답 대기 시간 초과");
+			}
+			return new TossPaymentConfirmResponse("first-key", prepared.orderCode(), "카드", amount.longValue(), "DONE");
+		});
+
+		try (var executor = Executors.newSingleThreadExecutor()) {
+			var first = executor.submit(() -> paymentConfirmer.confirm(firstCommand, memberNo));
+			try {
+				assertThat(gatewayEntered.await(5, TimeUnit.SECONDS)).isTrue();
+
+				// when / then: 첫 승인의 외부 응답을 기다리는 동안 두 번째 요청을 실행한다.
+				assertThatThrownBy(() -> paymentConfirmer.confirm(secondCommand, memberNo))
+					.isInstanceOf(BusinessException.class)
+					.hasFieldOrPropertyWithValue("errorCode", PaymentError.PAYMENT_ATTEMPT_IN_PROGRESS);
+				Order order = orderRepository.findByOrderCode(prepared.orderCode()).orElseThrow();
+				assertThat(paymentRepository.findByOrder(order).orElseThrow().getPaymentKey()).isEqualTo("first-key");
+			} finally {
+				releaseGateway.countDown();
+			}
+			assertThat(first.get(10, TimeUnit.SECONDS).paymentStatus()).isEqualTo(PaymentStatus.PAID);
+		}
+		verify(tossPaymentClient, times(1)).confirmPayment(any());
+		assertThat(paymentAttemptRepository.findByAttemptId("second-id")).isEmpty();
 	}
 }

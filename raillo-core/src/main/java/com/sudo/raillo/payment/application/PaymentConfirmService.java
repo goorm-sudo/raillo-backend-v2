@@ -103,20 +103,23 @@ public class PaymentConfirmService implements PaymentConfirmer {
 		List<PendingBooking> pendingBookings = validateAndGetPendingBookings(order, memberNo);
 		paymentValidator.validateDuplicatePayment(order);
 
-		paymentModifier.updatePaymentKeyInNewTransaction(payment.getId(), command.paymentKey());
-		// REQUIRES_NEW로 별도 커밋된 paymentKey를 바깥 트랜잭션 엔티티에도 동기화
-		// (미동기화 시 바깥 트랜잭션 커밋 때 Hibernate가 paymentKey=null로 덮어씀)
-		payment.updatePaymentKey(command.paymentKey());
-
-		Long attemptDbId;
+		PaymentAttemptStartResult started;
 		try {
-			attemptDbId = paymentAttemptManager.startApprovalInNewTransaction(
+			started = paymentAttemptManager.startApprovalInNewTransaction(
 				payment.getId(), attemptId, command.paymentKey()
 			);
 		} catch (DataIntegrityViolationException e) {
 			// 동시 요청이 정확히 같은 attemptId로 방금 INSERT함. 처리 중 안내로 응답한다.
 			throw new BusinessException(PaymentError.PAYMENT_ATTEMPT_IN_PROGRESS);
 		}
+		if (!started.created()) {
+			PaymentAttempt existing = paymentAttemptRepository.findById(started.attemptDbId())
+				.orElseThrow(() -> new BusinessException(PaymentError.PAYMENT_ATTEMPT_NOT_FOUND));
+			return handleExistingAttempt(existing, payment, command);
+		}
+		Long attemptDbId = started.attemptDbId();
+		// 별도 커밋된 paymentKey를 바깥 엔티티에도 반영해, 최종 UPDATE가 이전 값으로 덮어쓰지 않도록 한다.
+		payment.updatePaymentKey(command.paymentKey());
 
 		GatewayConfirmResult result;
 		try {
