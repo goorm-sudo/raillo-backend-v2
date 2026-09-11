@@ -32,17 +32,33 @@ public class PaymentValidator {
 		}
 	}
 
+	/**
+	 * 저장된 attempt가 이 승인 요청과 동일한 요청의 재시도가 맞는지 확인한다.
+	 *
+	 * <p>세 축(payment, paymentKey, attempt_type) 중 어느 하나라도 어긋나면
+	 * 같은 응답 코드로 거절한다. 클라이언트에는 세부 원인을 감춰 probing을 막고,
+	 * 서버 로그에는 어느 축이 어긋났는지 남겨 운영 시 근본 원인 추적을 돕는다.
+	 */
 	public void validateApprovalAttempt(PaymentAttempt attempt, Long paymentId, String paymentKey) {
-		if (!Objects.equals(attempt.getPaymentId(), paymentId)
-			|| !Objects.equals(attempt.getPaymentKey(), paymentKey)
-			|| attempt.getAttemptType() != PaymentAttemptType.APPROVAL) {
+		if (!Objects.equals(attempt.getPaymentId(), paymentId)) {
+			log.warn("[승인 attempt 미스매치] payment_id 불일치: attempt={}, request={}",
+				attempt.getPaymentId(), paymentId);
+			throw new BusinessException(PaymentError.PAYMENT_ATTEMPT_REQUEST_MISMATCH);
+		}
+		if (!Objects.equals(attempt.getPaymentKey(), paymentKey)) {
+			log.warn("[승인 attempt 미스매치] payment_key 불일치: attemptId={}", attempt.getAttemptId());
+			throw new BusinessException(PaymentError.PAYMENT_ATTEMPT_REQUEST_MISMATCH);
+		}
+		if (attempt.getAttemptType() != PaymentAttemptType.APPROVAL) {
+			log.warn("[승인 attempt 미스매치] attempt_type이 APPROVAL 아님: attemptId={}, actual={}",
+				attempt.getAttemptId(), attempt.getAttemptType());
 			throw new BusinessException(PaymentError.PAYMENT_ATTEMPT_REQUEST_MISMATCH);
 		}
 	}
 
 	public void validatePaymentOwner(Payment payment, Member member) {
 		if (!payment.getMember().getId().equals(member.getId())) {
-			log.error("[소유자 불일치] Payment의 소유자가 아님: paymentId={}, requestMemberId={}, paymentMemberId={}",
+			log.error("[소유자 불일치] Payment의 소에유자가 아님: paymentId={}, requestMemberId={}, paymentMemberId={}",
 				payment.getId(), member.getId(), payment.getMember().getId());
 			throw new BusinessException(PaymentError.PAYMENT_ACCESS_DENIED);
 		}
