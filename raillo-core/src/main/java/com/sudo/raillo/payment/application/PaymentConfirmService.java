@@ -99,6 +99,7 @@ public class PaymentConfirmService implements PaymentConfirmer {
 			return handleExistingAttempt(existingAttempt.get(), payment, command);
 		}
 
+		paymentValidator.validateApprovable(payment);
 		List<PendingBooking> pendingBookings = validateAndGetPendingBookings(order, memberNo);
 		paymentValidator.validateDuplicatePayment(order);
 

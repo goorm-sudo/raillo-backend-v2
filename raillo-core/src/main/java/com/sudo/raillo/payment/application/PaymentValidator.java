@@ -49,6 +49,15 @@ public class PaymentValidator {
 		}
 	}
 
+	public void validateApprovable(Payment payment) {
+		if (payment.getPaymentStatus() == PaymentStatus.PAID) {
+			throw new BusinessException(PaymentError.PAYMENT_ALREADY_COMPLETED);
+		}
+		if (payment.getPaymentStatus() != PaymentStatus.PENDING) {
+			throw new BusinessException(PaymentError.PAYMENT_NOT_APPROVABLE);
+		}
+	}
+
 	/**
 	 * 클라이언트 요청 금액, Order 금액, Payment 금액 모두 일치 여부 검증.
 	 */

@@ -11,6 +11,8 @@ import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
@@ -573,5 +575,40 @@ class PaymentConfirmServiceTest {
 
 		bookingRedisRepository.savePendingBooking(pendingBooking);
 		return pendingBooking;
+	}
+
+	@ParameterizedTest
+	@EnumSource(value = PaymentStatus.class, names = {"FAILED", "CANCELLED", "REFUNDED"})
+	@DisplayName("승인 불가능한 결제에 새 attemptId로 요청해도 토스 호출 전에 거절한다")
+	void rejects_new_attempt_for_unpayable_payment_before_gateway(PaymentStatus status) {
+		// given
+		BigDecimal amount = BigDecimal.valueOf(50000);
+		PendingBooking pendingBooking = createPendingBookingWithHold(amount);
+		PaymentPrepareResult prepared = paymentPreparer.prepare(
+			new PaymentPrepareCommand(List.of(pendingBooking.getId())), memberNo);
+		Order order = orderRepository.findByOrderCode(prepared.orderCode()).orElseThrow();
+		Payment payment = paymentRepository.findByOrder(order).orElseThrow();
+		payment.updatePaymentKey("previous-key");
+		switch (status) {
+			case FAILED -> payment.fail("REJECT", "카드 거절");
+			case CANCELLED -> payment.cancel("취소");
+			case REFUNDED -> {
+				payment.approve(PaymentMethod.CREDIT_CARD);
+				payment.refund();
+			}
+			default -> throw new AssertionError(status);
+		}
+		paymentRepository.saveAndFlush(payment);
+		given(tossPaymentClient.confirmPayment(any())).willReturn(new TossPaymentConfirmResponse(
+			"new-key", prepared.orderCode(), "카드", amount.longValue(), "DONE"));
+		PaymentConfirmCommand command = new PaymentConfirmCommand("new-key", prepared.orderCode(), amount, "new-attempt");
+
+		// when / then
+		assertThatThrownBy(() -> paymentConfirmer.confirm(command, memberNo))
+			.isInstanceOf(BusinessException.class)
+			.hasFieldOrPropertyWithValue("errorCode", PaymentError.PAYMENT_NOT_APPROVABLE);
+		verify(tossPaymentClient, never()).confirmPayment(any());
+		assertThat(paymentAttemptRepository.findByAttemptId("new-attempt")).isEmpty();
+		assertThat(paymentRepository.findById(payment.getId()).orElseThrow().getPaymentKey()).isEqualTo("previous-key");
 	}
 }
