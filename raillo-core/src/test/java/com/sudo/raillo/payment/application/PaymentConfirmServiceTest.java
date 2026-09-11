@@ -232,6 +232,95 @@ class PaymentConfirmServiceTest {
 	}
 
 	@Test
+	@DisplayName("SUCCEEDED attempt로 재요청하면 이전 결과를 반환하고 Toss는 호출되지 않는다")
+	void confirmPayment_retryOnSucceededAttempt_returnsPreviousResult() {
+		// given
+		BigDecimal amount = BigDecimal.valueOf(50000);
+		String paymentKey = "toss_pk_retry_success";
+		String attemptId = "attempt-retry-success";
+
+		PendingBooking pendingBooking = createPendingBookingWithHold(amount);
+		PaymentPrepareResult preparedResult = paymentPreparer.prepare(
+			new PaymentPrepareCommand(List.of(pendingBooking.getId())), memberNo);
+
+		TossPaymentConfirmResponse tossResponse = new TossPaymentConfirmResponse(
+			paymentKey, preparedResult.orderCode(), "카드", amount.longValue(), "DONE");
+		given(tossPaymentClient.confirmPayment(any(PaymentConfirmCommand.class))).willReturn(tossResponse);
+
+		PaymentConfirmCommand request = new PaymentConfirmCommand(
+			paymentKey, preparedResult.orderCode(), amount, attemptId);
+
+		// 첫 요청 (성공)
+		PaymentConfirmResult first = paymentConfirmer.confirm(request, memberNo);
+
+		// when: 같은 attemptId로 재요청
+		PaymentConfirmResult second = paymentConfirmer.confirm(request, memberNo);
+
+		// then: 동일한 paymentId 반환
+		assertThat(second.paymentId()).isEqualTo(first.paymentId());
+		// Toss는 처음 한 번만 호출
+		verify(tossPaymentClient, times(1)).confirmPayment(any(PaymentConfirmCommand.class));
+	}
+
+	@Test
+	@DisplayName("FAILED attempt로 재요청하면 PAYMENT_ATTEMPT_ALREADY_FAILED 예외를 던진다")
+	void confirmPayment_retryOnFailedAttempt_throwsAlreadyFailed() {
+		// given: 첫 요청은 Toss 실패
+		BigDecimal amount = BigDecimal.valueOf(50000);
+		String paymentKey = "toss_pk_retry_failed";
+		String attemptId = "attempt-retry-failed";
+
+		PendingBooking pendingBooking = createPendingBookingWithHold(amount);
+		PaymentPrepareResult preparedResult = paymentPreparer.prepare(
+			new PaymentPrepareCommand(List.of(pendingBooking.getId())), memberNo);
+
+		given(tossPaymentClient.confirmPayment(any(PaymentConfirmCommand.class)))
+			.willThrow(new TossPaymentException(400, "REJECT_CARD_PAYMENT", "카드 승인 거절"));
+
+		PaymentConfirmCommand request = new PaymentConfirmCommand(
+			paymentKey, preparedResult.orderCode(), amount, attemptId);
+
+		assertThatThrownBy(() -> paymentConfirmer.confirm(request, memberNo))
+			.isInstanceOf(TossPaymentException.class);
+
+		// when + then: 같은 attemptId로 재요청 → BusinessException
+		assertThatThrownBy(() -> paymentConfirmer.confirm(request, memberNo))
+			.isInstanceOf(BusinessException.class)
+			.hasMessageContaining("이미 실패한 결제 시도");
+	}
+
+	@Test
+	@DisplayName("IN_PROGRESS attempt가 존재하는 상태에서 재요청하면 PAYMENT_ATTEMPT_IN_PROGRESS 예외를 던진다")
+	void confirmPayment_retryOnInProgressAttempt_throwsInProgress() {
+		// given: Payment가 있고, IN_PROGRESS attempt를 직접 저장
+		BigDecimal amount = BigDecimal.valueOf(50000);
+		String paymentKey = "toss_pk_in_progress";
+		String attemptId = "attempt-in-progress";
+
+		PendingBooking pendingBooking = createPendingBookingWithHold(amount);
+		PaymentPrepareResult preparedResult = paymentPreparer.prepare(
+			new PaymentPrepareCommand(List.of(pendingBooking.getId())), memberNo);
+		Payment payment = paymentRepository.findAll().stream()
+			.filter(p -> p.getOrderCode().equals(preparedResult.orderCode()))
+			.findFirst()
+			.orElseThrow();
+
+		paymentAttemptRepository.save(
+			PaymentAttempt.startApproval(payment.getId(), attemptId, paymentKey));
+
+		PaymentConfirmCommand request = new PaymentConfirmCommand(
+			paymentKey, preparedResult.orderCode(), amount, attemptId);
+
+		// when + then
+		assertThatThrownBy(() -> paymentConfirmer.confirm(request, memberNo))
+			.isInstanceOf(BusinessException.class)
+			.hasMessageContaining("결제 처리 중");
+
+		// Toss는 호출되지 않음
+		verify(tossPaymentClient, never()).confirmPayment(any(PaymentConfirmCommand.class));
+	}
+
+	@Test
 	@DisplayName("결제 승인 성공 시 attempt는 SUCCEEDED, payment_outbox에 BOOKING_CONFIRMED 행이 저장된다")
 	void confirmPayment_whenSucceeded_marksAttemptSucceededAndInsertsOutbox() {
 		// given

@@ -6,6 +6,9 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import java.util.Optional;
+
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
@@ -81,13 +84,22 @@ public class PaymentConfirmService implements PaymentConfirmer {
 			command.orderId(), command.paymentKey(), command.amount(), attemptId);
 
 		Order order = orderReader.getOrderByOrderCode(command.orderId());
-		List<PendingBooking> pendingBookings = validateAndGetPendingBookings(order, memberNo);
 		Member member = memberFinder.getMemberByMemberNo(memberNo);
 		Payment payment = paymentModifier.getPaymentByOrder(order);
 
 		orderReader.validateOrderOwner(order, member);
 		paymentValidator.validatePaymentOwner(payment, member);
 		paymentValidator.validateAmounts(command.amount(), order.getTotalAmount(), payment.getAmount());
+
+		// 같은 attemptId로 재요청이 왔다면 상태에 따라 이전 결과 반환하거나 예외 던지고 조기 종료한다.
+		// PendingBooking 조회보다 먼저 처리해야 SUCCEEDED 재요청도 정상 응답한다.
+		// (성공한 flow에서는 PendingBooking이 이미 정리됐을 수 있어 재조회 시 만료 예외가 난다.)
+		Optional<PaymentAttempt> existingAttempt = paymentAttemptRepository.findByAttemptId(attemptId);
+		if (existingAttempt.isPresent()) {
+			return handleExistingAttempt(existingAttempt.get(), payment);
+		}
+
+		List<PendingBooking> pendingBookings = validateAndGetPendingBookings(order, memberNo);
 		paymentValidator.validateDuplicatePayment(order);
 
 		paymentModifier.updatePaymentKeyInNewTransaction(payment.getId(), command.paymentKey());
@@ -95,9 +107,15 @@ public class PaymentConfirmService implements PaymentConfirmer {
 		// (미동기화 시 바깥 트랜잭션 커밋 때 Hibernate가 paymentKey=null로 덮어씀)
 		payment.updatePaymentKey(command.paymentKey());
 
-		Long attemptDbId = paymentAttemptManager.startApprovalInNewTransaction(
-			payment.getId(), attemptId, command.paymentKey()
-		);
+		Long attemptDbId;
+		try {
+			attemptDbId = paymentAttemptManager.startApprovalInNewTransaction(
+				payment.getId(), attemptId, command.paymentKey()
+			);
+		} catch (DataIntegrityViolationException e) {
+			// 동시 요청이 정확히 같은 attemptId로 방금 INSERT함. 처리 중 안내로 응답한다.
+			throw new BusinessException(PaymentError.PAYMENT_ATTEMPT_IN_PROGRESS);
+		}
 
 		GatewayConfirmResult result;
 		try {
@@ -126,6 +144,18 @@ public class PaymentConfirmService implements PaymentConfirmer {
 
 		log.info("[결제 승인 완료] paymentId={}, orderCode={}", payment.getId(), command.orderId());
 		return PaymentConfirmResult.from(payment);
+	}
+
+	private PaymentConfirmResult handleExistingAttempt(PaymentAttempt existing, Payment payment) {
+		return switch (existing.getStatus()) {
+			case SUCCEEDED -> {
+				log.info("[결제 재요청 - SUCCEEDED attempt 재사용] attemptId={}, paymentId={}",
+					existing.getAttemptId(), payment.getId());
+				yield PaymentConfirmResult.from(payment);
+			}
+			case FAILED -> throw new BusinessException(PaymentError.PAYMENT_ATTEMPT_ALREADY_FAILED);
+			case IN_PROGRESS -> throw new BusinessException(PaymentError.PAYMENT_ATTEMPT_IN_PROGRESS);
+		};
 	}
 
 	private PaymentOutbox buildBookingConfirmedOutbox(Payment payment, List<PendingBooking> pendingBookings) {
