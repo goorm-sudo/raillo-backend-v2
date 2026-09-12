@@ -2,7 +2,7 @@ package com.sudo.raillo.payment.adapter.webapi.dto;
 
 import java.math.BigDecimal;
 
-import com.sudo.raillo.payment.application.PaymentPrepareResult;
+import com.sudo.raillo.payment.application.result.PaymentPrepareResult;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 

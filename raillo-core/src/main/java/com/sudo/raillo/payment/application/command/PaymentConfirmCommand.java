@@ -1,5 +1,6 @@
-package com.sudo.raillo.payment.application;
+package com.sudo.raillo.payment.application.command;
 
+import com.sudo.raillo.payment.application.PaymentAttemptIds;
 import java.math.BigDecimal;
 
 public record PaymentConfirmCommand(

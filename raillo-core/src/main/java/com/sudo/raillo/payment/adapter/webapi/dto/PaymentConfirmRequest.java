@@ -2,7 +2,7 @@ package com.sudo.raillo.payment.adapter.webapi.dto;
 
 import java.math.BigDecimal;
 
-import com.sudo.raillo.payment.application.PaymentConfirmCommand;
+import com.sudo.raillo.payment.application.command.PaymentConfirmCommand;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;

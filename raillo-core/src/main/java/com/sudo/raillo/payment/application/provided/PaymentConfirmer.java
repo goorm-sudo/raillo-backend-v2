@@ -1,7 +1,7 @@
 package com.sudo.raillo.payment.application.provided;
 
-import com.sudo.raillo.payment.application.PaymentConfirmCommand;
-import com.sudo.raillo.payment.application.PaymentConfirmResult;
+import com.sudo.raillo.payment.application.command.PaymentConfirmCommand;
+import com.sudo.raillo.payment.application.result.PaymentConfirmResult;
 
 /**
  * 결제 승인 유스케이스 provided port.

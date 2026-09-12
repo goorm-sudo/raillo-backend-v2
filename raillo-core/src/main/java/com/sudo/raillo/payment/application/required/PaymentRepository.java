@@ -3,7 +3,7 @@ package com.sudo.raillo.payment.application.required;
 import java.util.Optional;
 
 import com.sudo.raillo.order.domain.Order;
-import com.sudo.raillo.payment.application.PaymentConfirmResult;
+import com.sudo.raillo.payment.application.result.PaymentConfirmResult;
 import com.sudo.raillo.payment.domain.Payment;
 import com.sudo.raillo.payment.domain.PaymentStatus;
 

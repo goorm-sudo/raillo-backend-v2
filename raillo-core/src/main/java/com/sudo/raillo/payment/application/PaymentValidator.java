@@ -1,5 +1,6 @@
 package com.sudo.raillo.payment.application;
 
+import com.sudo.raillo.payment.application.command.PaymentConfirmCommand;
 import java.math.BigDecimal;
 import java.util.Objects;
 
@@ -58,7 +59,7 @@ public class PaymentValidator {
 
 	public void validatePaymentOwner(Payment payment, Member member) {
 		if (!payment.getMember().getId().equals(member.getId())) {
-			log.error("[소유자 불일치] Payment의 소에유자가 아님: paymentId={}, requestMemberId={}, paymentMemberId={}",
+			log.error("[소유자 불일치] Payment의 소유자가 아님: paymentId={}, requestMemberId={}, paymentMemberId={}",
 				payment.getId(), member.getId(), payment.getMember().getId());
 			throw new BusinessException(PaymentError.PAYMENT_ACCESS_DENIED);
 		}

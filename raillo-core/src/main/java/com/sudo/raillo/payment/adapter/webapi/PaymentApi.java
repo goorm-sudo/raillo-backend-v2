@@ -12,8 +12,8 @@ import com.sudo.raillo.payment.adapter.webapi.dto.PaymentConfirmRequest;
 import com.sudo.raillo.payment.adapter.webapi.dto.PaymentConfirmResponse;
 import com.sudo.raillo.payment.adapter.webapi.dto.PaymentPrepareRequest;
 import com.sudo.raillo.payment.adapter.webapi.dto.PaymentPrepareResponse;
-import com.sudo.raillo.payment.application.PaymentConfirmResult;
-import com.sudo.raillo.payment.application.PaymentPrepareResult;
+import com.sudo.raillo.payment.application.result.PaymentConfirmResult;
+import com.sudo.raillo.payment.application.result.PaymentPrepareResult;
 import com.sudo.raillo.payment.application.provided.PaymentConfirmer;
 import com.sudo.raillo.payment.application.provided.PaymentPreparer;
 import com.sudo.raillo.payment.domain.success.PaymentSuccess;
@@ -37,7 +37,8 @@ public class PaymentApi {
 	@PostMapping("/prepare")
 	public SuccessResponse<PaymentPrepareResponse> preparePayment(
 		@RequestBody @Valid PaymentPrepareRequest request,
-		@AuthenticationPrincipal UserDetails userDetails) {
+		@AuthenticationPrincipal UserDetails userDetails
+	) {
 		String memberNo = userDetails.getUsername();
 		PaymentPrepareResult result = paymentPreparer.prepare(request.toCommand(), memberNo);
 		return SuccessResponse.of(PaymentSuccess.PAYMENT_PREPARE_SUCCESS, PaymentPrepareResponse.from(result));
@@ -47,7 +48,8 @@ public class PaymentApi {
 	@PostMapping("/confirm")
 	public SuccessResponse<PaymentConfirmResponse> confirmPayment(
 		@RequestBody @Valid PaymentConfirmRequest request,
-		@AuthenticationPrincipal UserDetails userDetails) {
+		@AuthenticationPrincipal UserDetails userDetails
+	) {
 		String memberNo = userDetails.getUsername();
 		PaymentConfirmResult result = paymentConfirmer.confirm(request.toCommand(), memberNo);
 		return SuccessResponse.of(PaymentSuccess.PAYMENT_CONFIRM_SUCCESS, PaymentConfirmResponse.from(result));
