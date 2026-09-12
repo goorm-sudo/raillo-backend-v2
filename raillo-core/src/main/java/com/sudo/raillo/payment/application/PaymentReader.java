@@ -1,5 +1,6 @@
 package com.sudo.raillo.payment.application;
 
+import com.sudo.raillo.payment.application.result.PaymentConfirmResult;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -31,7 +32,7 @@ public class PaymentReader {
 
 	/**
 	 * 이미 로드한 Payment 엔티티가 아니라 DB의 최신 커밋 상태로 승인 결과를 조회한다.
-	 * READ_COMMITTED 스냅샷 이후 다른 트랜잭션이 커밋한 결과를 놓치지 않기 위해 사용한다.
+	 * 재요청 처리 시 이전 조회에서 얻은 분리된 엔티티 상태를 응답에 사용하지 않기 위해 사용한다.
 	 */
 	public PaymentConfirmResult getConfirmResult(Long paymentId) {
 		return paymentRepository.findConfirmResultById(paymentId)
