@@ -67,52 +67,6 @@ class PaymentModifierTest {
 	}
 
 	@Test
-	@DisplayName("Order로 Payment를 조회할 수 있다")
-	void getPaymentByOrder_success() {
-		// given
-		Payment savedPayment = paymentModifier.createPayment(member, order);
-
-		// when
-		Payment foundPayment = paymentModifier.getPaymentByOrder(order);
-
-		// then
-		assertThat(foundPayment.getId()).isEqualTo(savedPayment.getId());
-	}
-
-	@Test
-	@DisplayName("존재하지 않는 Order로 Payment 조회 시 예외가 발생한다")
-	void getPaymentByOrder_notFound_throwsException() {
-		// given
-		Order otherOrder = orderRepository.save(
-			OrderFixture.builder()
-				.withMember(member)
-				.withTotalAmount(BigDecimal.valueOf(10000))
-				.build()
-		);
-
-		// when & then
-		assertThatThrownBy(() -> paymentModifier.getPaymentByOrder(otherOrder))
-			.isInstanceOf(BusinessException.class)
-			.hasFieldOrPropertyWithValue("errorCode", PaymentError.PAYMENT_NOT_FOUND)
-			.hasMessage(PaymentError.PAYMENT_NOT_FOUND.getMessage());
-	}
-
-	@Test
-	@DisplayName("PaymentKey가 정상적으로 업데이트된다")
-	void updatePaymentKeyInNewTransaction_success() {
-		// given
-		Payment payment = paymentModifier.createPayment(member, order);
-		String paymentKey = "toss_payment_key_12345";
-
-		// when
-		paymentModifier.updatePaymentKeyInNewTransaction(payment.getId(), paymentKey);
-
-		// then
-		Payment updatedPayment = paymentRepository.findById(payment.getId()).orElseThrow();
-		assertThat(updatedPayment.getPaymentKey()).isEqualTo(paymentKey);
-	}
-
-	@Test
 	@DisplayName("Payment 실패 처리가 정상적으로 수행된다")
 	void failPaymentInNewTransaction_success() {
 		// given

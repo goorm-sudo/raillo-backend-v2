@@ -1,4 +1,4 @@
-package com.sudo.raillo.payment.application;
+package com.sudo.raillo.payment.application.result;
 
 import java.math.BigDecimal;
 

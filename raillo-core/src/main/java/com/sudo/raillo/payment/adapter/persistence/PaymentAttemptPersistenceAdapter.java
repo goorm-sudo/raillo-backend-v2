@@ -36,6 +36,11 @@ public class PaymentAttemptPersistenceAdapter implements PaymentAttemptRepositor
 	}
 
 	@Override
+	public Optional<PaymentAttempt> findLatestApprovalByPaymentId(Long paymentId) {
+		return jpaRepository.findFirstByPaymentIdAndAttemptTypeOrderByIdDesc(paymentId, PaymentAttemptType.APPROVAL);
+	}
+
+	@Override
 	public List<PaymentAttempt> findInProgressOlderThan(PaymentAttemptType type, LocalDateTime threshold, int limit) {
 		return jpaRepository.findStaleInProgress(PaymentAttemptStatus.IN_PROGRESS, type, threshold, Limit.of(limit));
 	}

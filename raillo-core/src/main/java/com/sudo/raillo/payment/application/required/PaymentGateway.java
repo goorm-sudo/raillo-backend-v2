@@ -2,7 +2,7 @@ package com.sudo.raillo.payment.application.required;
 
 import java.math.BigDecimal;
 
-import com.sudo.raillo.payment.application.PaymentConfirmCommand;
+import com.sudo.raillo.payment.application.command.PaymentConfirmCommand;
 import com.sudo.raillo.payment.domain.PaymentMethod;
 
 /**

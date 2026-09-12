@@ -5,6 +5,7 @@ import java.util.Optional;
 import org.springframework.stereotype.Component;
 
 import com.sudo.raillo.order.domain.Order;
+import com.sudo.raillo.payment.application.result.PaymentConfirmResult;
 import com.sudo.raillo.payment.application.required.PaymentRepository;
 import com.sudo.raillo.payment.domain.Payment;
 import com.sudo.raillo.payment.domain.PaymentStatus;
@@ -30,6 +31,16 @@ public class PaymentPersistenceAdapter implements PaymentRepository {
 	@Override
 	public Optional<Payment> findByPaymentKey(String paymentKey) {
 		return jpaRepository.findByPaymentKey(paymentKey);
+	}
+
+	@Override
+	public Optional<PaymentConfirmResult> findConfirmResultById(Long paymentId) {
+		return jpaRepository.findConfirmResultById(paymentId);
+	}
+
+	@Override
+	public Optional<Payment> findByIdForUpdate(Long paymentId) {
+		return jpaRepository.findByIdForUpdate(paymentId);
 	}
 
 	@Override

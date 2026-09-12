@@ -4,15 +4,27 @@ import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.BDDMockito.*;
 
+import com.sudo.raillo.payment.application.command.PaymentConfirmCommand;
+import com.sudo.raillo.payment.application.command.PaymentPrepareCommand;
+import com.sudo.raillo.payment.application.result.PaymentPrepareResult;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import com.sudo.raillo.booking.application.service.SeatHoldService;
 import com.sudo.raillo.booking.domain.PendingBooking;
@@ -20,6 +32,7 @@ import com.sudo.raillo.booking.domain.PendingSeatBooking;
 import com.sudo.raillo.booking.domain.type.PassengerType;
 import com.sudo.raillo.booking.exception.BookingError;
 import com.sudo.raillo.booking.infrastructure.BookingRedisRepository;
+import com.sudo.raillo.booking.infrastructure.BookingRepository;
 import com.sudo.raillo.booking.infrastructure.SeatHoldRepository;
 import com.sudo.raillo.booking.infrastructure.SeatHoldResult;
 import com.sudo.raillo.common.exception.BusinessException;
@@ -31,11 +44,17 @@ import com.sudo.raillo.order.exception.OrderError;
 import com.sudo.raillo.order.infrastructure.OrderRepository;
 import com.sudo.raillo.payment.application.provided.PaymentPreparer;
 import com.sudo.raillo.payment.application.provided.PaymentConfirmer;
-import com.sudo.raillo.payment.application.PaymentConfirmCommand;
-import com.sudo.raillo.payment.application.PaymentConfirmResult;
-import com.sudo.raillo.payment.application.PaymentPrepareCommand;
-import com.sudo.raillo.payment.application.PaymentPrepareResult;
+import com.sudo.raillo.payment.application.result.PaymentConfirmResult;
+
+import com.sudo.raillo.payment.application.required.PaymentAttemptRepository;
+import com.sudo.raillo.payment.application.required.PaymentOutboxRepository;
 import com.sudo.raillo.payment.domain.Payment;
+import com.sudo.raillo.payment.domain.PaymentAttempt;
+import com.sudo.raillo.payment.domain.PaymentAttemptStatus;
+import com.sudo.raillo.payment.domain.PaymentAttemptType;
+import com.sudo.raillo.payment.domain.PaymentOutbox;
+import com.sudo.raillo.payment.domain.PaymentOutboxStatus;
+import com.sudo.raillo.payment.domain.PaymentOutboxType;
 import com.sudo.raillo.payment.domain.PaymentStatus;
 import com.sudo.raillo.payment.domain.PaymentMethod;
 import com.sudo.raillo.payment.domain.exception.PaymentError;
@@ -45,6 +64,7 @@ import com.sudo.raillo.payment.adapter.integration.toss.TossPaymentClient;
 import com.sudo.raillo.payment.adapter.integration.toss.TossPaymentConfirmResponse;
 import com.sudo.raillo.support.annotation.ServiceTest;
 import com.sudo.raillo.support.fixture.MemberFixture;
+import com.sudo.raillo.support.fixture.OrderFixture;
 import com.sudo.raillo.support.fixture.PendingBookingFixture;
 import com.sudo.raillo.support.helper.TrainScheduleResult;
 import com.sudo.raillo.support.helper.TrainScheduleTestHelper;
@@ -79,6 +99,9 @@ class PaymentConfirmServiceTest {
 	private BookingRedisRepository bookingRedisRepository;
 
 	@Autowired
+	private BookingRepository bookingRepository;
+
+	@Autowired
 	private TrainTestHelper trainTestHelper;
 
 	@Autowired
@@ -89,6 +112,12 @@ class PaymentConfirmServiceTest {
 
 	@Autowired
 	private SeatHoldRepository seatHoldRepository;
+
+	@Autowired
+	private PaymentAttemptRepository paymentAttemptRepository;
+
+	@MockitoSpyBean
+	private PaymentOutboxRepository paymentOutboxRepository;
 
 	private Member member;
 	private String memberNo;
@@ -103,13 +132,7 @@ class PaymentConfirmServiceTest {
 		trainScheduleResult = trainScheduleTestHelper.createDefault(train);
 	}
 
-	/**
-	 * 결제 승인 성공 시 paymentKey가 DB에 정상 저장되는지 검증
-	 *
-	 * <p>이 테스트는 REQUIRES_NEW 트랜잭션으로 저장한 paymentKey가
-	 * 바깥 트랜잭션 커밋 시 Hibernate의 전체 컬럼 UPDATE로 인해
-	 * null로 덮어쓰이는 버그를 방지합니다.</p>
-	 */
+	/** 결제 승인 시작 TX A에서 저장한 paymentKey가 승인 확정 TX B 이후에도 유지되는지 검증한다. */
 	@Test
 	@DisplayName("결제 승인 성공 시 paymentKey가 DB에 정상 저장된다")
 	void confirmPayment_paymentKeyPersistedInDatabase() {
@@ -132,10 +155,10 @@ class PaymentConfirmServiceTest {
 		// when
 		PaymentConfirmResult confirmedResult = paymentConfirmer.confirm(confirmRequest, memberNo);
 
-		// then - DB에서 직접 조회하여 paymentKey가 null이 아닌지 검증
+		// then
 		Payment savedPayment = paymentRepository.findById(confirmedResult.paymentId()).orElseThrow();
 		assertThat(savedPayment.getPaymentKey())
-			.as("REQUIRES_NEW 트랜잭션으로 저장한 paymentKey가 바깥 트랜잭션 커밋 시 덮어쓰이면 안 된다")
+			.as("TX A에서 저장한 paymentKey는 TX B 확정 후에도 유지되어야 한다")
 			.isEqualTo(paymentKey);
 	}
 
@@ -170,14 +193,44 @@ class PaymentConfirmServiceTest {
 		assertThat(savedOrder.getOrderStatus()).isEqualTo(OrderStatus.ORDERED);
 	}
 
+	@Test
+	@DisplayName("Toss 승인 API는 DB 트랜잭션이 없는 상태에서 호출된다")
+	void confirmPayment_callsGatewayWithoutDatabaseTransaction() {
+		// given
+		BigDecimal amount = BigDecimal.valueOf(50000);
+		String paymentKey = "toss_pk_without_transaction";
+		PendingBooking pendingBooking = createPendingBookingWithHold(amount);
+		PaymentPrepareResult prepared = paymentPreparer.prepare(
+			new PaymentPrepareCommand(List.of(pendingBooking.getId())), memberNo);
+
+		given(tossPaymentClient.confirmPayment(any(PaymentConfirmCommand.class)))
+			.willAnswer(invocation -> {
+				assertThat(TransactionSynchronizationManager.isActualTransactionActive())
+					.as("외부 Toss 호출 중에는 DB 트랜잭션이 열려 있으면 안 된다")
+					.isFalse();
+				return new TossPaymentConfirmResponse(
+					paymentKey, prepared.orderCode(), "카드", amount.longValue(), "DONE");
+			});
+
+		PaymentConfirmCommand command = new PaymentConfirmCommand(
+			paymentKey, prepared.orderCode(), amount, "attempt-without-transaction");
+
+		// when
+		PaymentConfirmResult result = paymentConfirmer.confirm(command, memberNo);
+
+		// then
+		assertThat(result.paymentStatus()).isEqualTo(PaymentStatus.PAID);
+		verify(tossPaymentClient).confirmPayment(any(PaymentConfirmCommand.class));
+	}
+
 	/**
 	 * REQUIRES_NEW 독립 커밋 검증
 	 *
-	 * <p>토스 결제 실패로 바깥 트랜잭션이 롤백되어도,
-	 * REQUIRES_NEW로 저장한 paymentKey와 실패 정보는 DB에 남아있어야 합니다.</p>
+	 * <p>토스 결제 실패가 발생해도 승인 시도 시작 트랜잭션에서 저장한
+	 * paymentKey와 실패 정보는 DB에 남아있어야 합니다.</p>
 	 */
 	@Test
-	@DisplayName("토스 결제 실패로 바깥 트랜잭션이 롤백되어도 REQUIRES_NEW로 저장한 paymentKey는 살아있다")
+	@DisplayName("토스 결제 확정 실패 시 사전에 저장한 paymentKey와 실패 상태가 유지된다")
 	void confirmPayment_tossFailure_paymentKeySurvivedByRequiresNew() {
 		// given
 		BigDecimal amount = BigDecimal.valueOf(50000);
@@ -187,32 +240,261 @@ class PaymentConfirmServiceTest {
 		PaymentPrepareResult preparedResult = paymentPreparer.prepare(
 			new PaymentPrepareCommand(List.of(pendingBooking.getId())), memberNo);
 
-		// 토스 API 실패 → 바깥 트랜잭션 롤백
+		// 토스 API가 확정적인 4xx 실패를 반환
 		given(tossPaymentClient.confirmPayment(any(PaymentConfirmCommand.class)))
 			.willThrow(new TossPaymentException(400, "INVALID_REQUEST", "test error"));
 
 		PaymentConfirmCommand confirmRequest = new PaymentConfirmCommand(
 			paymentKey, preparedResult.orderCode(), amount);
 
-		// when - 바깥 트랜잭션 롤백
+		// when
 		assertThatThrownBy(() -> paymentConfirmer.confirm(confirmRequest, memberNo))
 			.isInstanceOf(TossPaymentException.class)
 			.hasFieldOrPropertyWithValue("httpStatus", 400)
 			.hasFieldOrPropertyWithValue("errorCode", "INVALID_REQUEST")
 			.hasMessageContaining("test error");
 
-		// then - REQUIRES_NEW로 커밋한 paymentKey는 롤백과 무관하게 살아있어야 함
+		// then - 승인 시도 시작 트랜잭션에서 커밋한 paymentKey가 유지되어야 함
 		Payment savedPayment = paymentRepository.findByPaymentKey(paymentKey).orElseThrow();
 		assertThat(savedPayment.getPaymentKey())
-			.as("REQUIRES_NEW 트랜잭션은 바깥 트랜잭션 롤백과 독립적으로 커밋된다")
+			.as("승인 시도 시작 트랜잭션에서 paymentKey가 독립적으로 커밋된다")
 			.isEqualTo(paymentKey);
 		assertThat(savedPayment.getPaymentStatus())
 			.as("failPaymentInNewTransaction도 REQUIRES_NEW로 커밋되어 FAILED 상태가 유지된다")
 			.isEqualTo(PaymentStatus.FAILED);
 
-		// 바깥 트랜잭션은 롤백되었으므로 Order는 PENDING 상태 그대로
+		// 성공 확정 트랜잭션은 시작되지 않았으므로 Order는 PENDING 상태 그대로
 		Order savedOrder = orderRepository.findByOrderCode(preparedResult.orderCode()).orElseThrow();
 		assertThat(savedOrder.getOrderStatus()).isEqualTo(OrderStatus.PENDING);
+	}
+
+	@Test
+	@DisplayName("Toss 5xx 응답은 결과 불명으로 처리하여 Payment와 Attempt를 진행 중 상태로 유지한다")
+	void confirmPayment_tossServerError_keepsAttemptInProgress() {
+		// given
+		BigDecimal amount = BigDecimal.valueOf(50000);
+		String paymentKey = "toss_pk_unknown_result";
+		String attemptId = "attempt-unknown-result";
+		PendingBooking pendingBooking = createPendingBookingWithHold(amount);
+		PaymentPrepareResult prepared = paymentPreparer.prepare(
+			new PaymentPrepareCommand(List.of(pendingBooking.getId())), memberNo);
+
+		given(tossPaymentClient.confirmPayment(any(PaymentConfirmCommand.class)))
+			.willThrow(new TossPaymentException(500, "INTERNAL_SERVER_ERROR", "응답 결과 불명"));
+		PaymentConfirmCommand command = new PaymentConfirmCommand(
+			paymentKey, prepared.orderCode(), amount, attemptId);
+
+		// when
+		assertThatThrownBy(() -> paymentConfirmer.confirm(command, memberNo))
+			.isInstanceOf(TossPaymentException.class)
+			.hasFieldOrPropertyWithValue("httpStatus", 500);
+
+		// then
+		PaymentAttempt attempt = paymentAttemptRepository.findByAttemptId(attemptId).orElseThrow();
+		assertThat(attempt.getStatus()).isEqualTo(PaymentAttemptStatus.IN_PROGRESS);
+		assertThat(attempt.getErrorCode()).isNull();
+
+		Payment savedPayment = paymentRepository.findByPaymentKey(paymentKey).orElseThrow();
+		assertThat(savedPayment.getPaymentStatus()).isEqualTo(PaymentStatus.PENDING);
+		assertThat(orderRepository.findByOrderCode(prepared.orderCode()).orElseThrow().getOrderStatus())
+			.isEqualTo(OrderStatus.PENDING);
+	}
+
+	@Test
+	@DisplayName("SUCCEEDED attempt로 재요청하면 이전 결과를 반환하고 Toss는 호출되지 않는다")
+	void confirmPayment_retryOnSucceededAttempt_returnsPreviousResult() {
+		// given
+		BigDecimal amount = BigDecimal.valueOf(50000);
+		String paymentKey = "toss_pk_retry_success";
+		String attemptId = "attempt-retry-success";
+
+		PendingBooking pendingBooking = createPendingBookingWithHold(amount);
+		PaymentPrepareResult preparedResult = paymentPreparer.prepare(
+			new PaymentPrepareCommand(List.of(pendingBooking.getId())), memberNo);
+
+		TossPaymentConfirmResponse tossResponse = new TossPaymentConfirmResponse(
+			paymentKey, preparedResult.orderCode(), "카드", amount.longValue(), "DONE");
+		given(tossPaymentClient.confirmPayment(any(PaymentConfirmCommand.class))).willReturn(tossResponse);
+
+		PaymentConfirmCommand request = new PaymentConfirmCommand(
+			paymentKey, preparedResult.orderCode(), amount, attemptId);
+
+		// 첫 요청 (성공)
+		PaymentConfirmResult first = paymentConfirmer.confirm(request, memberNo);
+
+		// when: 같은 attemptId로 재요청
+		PaymentConfirmResult second = paymentConfirmer.confirm(request, memberNo);
+
+		// then: 동일한 paymentId 반환
+		assertThat(second.paymentId()).isEqualTo(first.paymentId());
+		// Toss는 처음 한 번만 호출
+		verify(tossPaymentClient, times(1)).confirmPayment(any(PaymentConfirmCommand.class));
+	}
+
+	@Test
+	@DisplayName("FAILED attempt로 재요청하면 PAYMENT_ATTEMPT_ALREADY_FAILED 예외를 던진다")
+	void confirmPayment_retryOnFailedAttempt_throwsAlreadyFailed() {
+		// given: 첫 요청은 Toss 실패
+		BigDecimal amount = BigDecimal.valueOf(50000);
+		String paymentKey = "toss_pk_retry_failed";
+		String attemptId = "attempt-retry-failed";
+
+		PendingBooking pendingBooking = createPendingBookingWithHold(amount);
+		PaymentPrepareResult preparedResult = paymentPreparer.prepare(
+			new PaymentPrepareCommand(List.of(pendingBooking.getId())), memberNo);
+
+		given(tossPaymentClient.confirmPayment(any(PaymentConfirmCommand.class)))
+			.willThrow(new TossPaymentException(400, "REJECT_CARD_PAYMENT", "카드 승인 거절"));
+
+		PaymentConfirmCommand request = new PaymentConfirmCommand(
+			paymentKey, preparedResult.orderCode(), amount, attemptId);
+
+		assertThatThrownBy(() -> paymentConfirmer.confirm(request, memberNo))
+			.isInstanceOf(TossPaymentException.class);
+
+		// when + then: 같은 attemptId로 재요청 → BusinessException
+		assertThatThrownBy(() -> paymentConfirmer.confirm(request, memberNo))
+			.isInstanceOf(BusinessException.class)
+			.hasMessageContaining("이미 실패한 결제 시도");
+	}
+
+	@Test
+	@DisplayName("IN_PROGRESS attempt가 존재하는 상태에서 재요청하면 PAYMENT_ATTEMPT_IN_PROGRESS 예외를 던진다")
+	void confirmPayment_retryOnInProgressAttempt_throwsInProgress() {
+		// given: Payment가 있고, IN_PROGRESS attempt를 직접 저장
+		BigDecimal amount = BigDecimal.valueOf(50000);
+		String paymentKey = "toss_pk_in_progress";
+		String attemptId = "attempt-in-progress";
+
+		PendingBooking pendingBooking = createPendingBookingWithHold(amount);
+		PaymentPrepareResult preparedResult = paymentPreparer.prepare(
+			new PaymentPrepareCommand(List.of(pendingBooking.getId())), memberNo);
+		Payment payment = paymentRepository.findAll().stream()
+			.filter(p -> p.getOrderCode().equals(preparedResult.orderCode()))
+			.findFirst()
+			.orElseThrow();
+
+		paymentAttemptRepository.save(
+			PaymentAttempt.startApproval(payment.getId(), attemptId, paymentKey));
+
+		PaymentConfirmCommand request = new PaymentConfirmCommand(
+			paymentKey, preparedResult.orderCode(), amount, attemptId);
+
+		// when + then
+		assertThatThrownBy(() -> paymentConfirmer.confirm(request, memberNo))
+			.isInstanceOf(BusinessException.class)
+			.hasMessageContaining("결제 처리 중");
+
+		// Toss는 호출되지 않음
+		verify(tossPaymentClient, never()).confirmPayment(any(PaymentConfirmCommand.class));
+	}
+
+	@Test
+	@DisplayName("결제 승인 성공 시 attempt는 SUCCEEDED, payment_outbox에 BOOKING_CONFIRMED 행이 저장된다")
+	void confirmPayment_whenSucceeded_marksAttemptSucceededAndInsertsOutbox() {
+		// given
+		BigDecimal amount = BigDecimal.valueOf(50000);
+		String paymentKey = "toss_pk_success_outbox";
+		String attemptId = "attempt-success-1";
+
+		PendingBooking pendingBooking = createPendingBookingWithHold(amount);
+		PaymentPrepareResult preparedResult = paymentPreparer.prepare(
+			new PaymentPrepareCommand(List.of(pendingBooking.getId())), memberNo);
+
+		TossPaymentConfirmResponse tossResponse = new TossPaymentConfirmResponse(
+			paymentKey, preparedResult.orderCode(), "카드", amount.longValue(), "DONE");
+		given(tossPaymentClient.confirmPayment(any(PaymentConfirmCommand.class)))
+			.willReturn(tossResponse);
+
+		PaymentConfirmCommand confirmRequest = new PaymentConfirmCommand(
+			paymentKey, preparedResult.orderCode(), amount, attemptId);
+
+		// when
+		PaymentConfirmResult confirmedResult = paymentConfirmer.confirm(confirmRequest, memberNo);
+
+		// then - attempt SUCCEEDED
+		PaymentAttempt attempt = paymentAttemptRepository.findByAttemptId(attemptId).orElseThrow();
+		assertThat(attempt.getStatus()).isEqualTo(PaymentAttemptStatus.SUCCEEDED);
+
+		// then - outbox에 BOOKING_CONFIRMED PENDING 행 존재
+		String dedupKey = "payment:%d:booking-confirmed".formatted(confirmedResult.paymentId());
+		PaymentOutbox outbox = paymentOutboxRepository.findByDeduplicationKey(dedupKey).orElseThrow();
+		assertThat(outbox.getType()).isEqualTo(PaymentOutboxType.BOOKING_CONFIRMED);
+		assertThat(outbox.getStatus()).isEqualTo(PaymentOutboxStatus.PENDING);
+		assertThat(outbox.getAggregateId()).isEqualTo(confirmedResult.paymentId());
+		assertThat(outbox.getPayload()).contains(pendingBooking.getId());
+	}
+
+	@Test
+	@DisplayName("승인 확정 중 Outbox 저장이 실패하면 DB 변경 전체가 롤백되고 Attempt는 IN_PROGRESS로 유지된다")
+	void confirmPayment_finalizationFailure_rollsBackDatabaseChanges() {
+		// given
+		BigDecimal amount = BigDecimal.valueOf(50000);
+		String paymentKey = "toss_pk_finalization_rollback";
+		String attemptId = "attempt-finalization-rollback";
+		PendingBooking pendingBooking = createPendingBookingWithHold(amount);
+		PaymentPrepareResult prepared = paymentPreparer.prepare(
+			new PaymentPrepareCommand(List.of(pendingBooking.getId())), memberNo);
+
+		given(tossPaymentClient.confirmPayment(any(PaymentConfirmCommand.class)))
+			.willReturn(new TossPaymentConfirmResponse(
+				paymentKey, prepared.orderCode(), "카드", amount.longValue(), "DONE"));
+		doThrow(new IllegalStateException("outbox 저장 실패"))
+			.when(paymentOutboxRepository).save(any(PaymentOutbox.class));
+
+		PaymentConfirmCommand command = new PaymentConfirmCommand(
+			paymentKey, prepared.orderCode(), amount, attemptId);
+
+		// when
+		assertThatThrownBy(() -> paymentConfirmer.confirm(command, memberNo))
+			.isInstanceOf(IllegalStateException.class)
+			.hasMessage("outbox 저장 실패");
+
+		// then
+		Order savedOrder = orderRepository.findByOrderCode(prepared.orderCode()).orElseThrow();
+		assertThat(savedOrder.getOrderStatus()).isEqualTo(OrderStatus.PENDING);
+
+		Payment savedPayment = paymentRepository.findByPaymentKey(paymentKey).orElseThrow();
+		assertThat(savedPayment.getPaymentStatus()).isEqualTo(PaymentStatus.PENDING);
+		assertThat(savedPayment.getPaidAt()).isNull();
+
+		PaymentAttempt attempt = paymentAttemptRepository.findByAttemptId(attemptId).orElseThrow();
+		assertThat(attempt.getStatus()).isEqualTo(PaymentAttemptStatus.IN_PROGRESS);
+		assertThat(bookingRepository.count()).isZero();
+		assertThat(paymentOutboxRepository.findByDeduplicationKey(
+			"payment:%d:booking-confirmed".formatted(savedPayment.getId()))).isEmpty();
+		assertThat(bookingRedisRepository.getPendingBooking(pendingBooking.getId())).isPresent();
+	}
+
+	@Test
+	@DisplayName("Toss 승인 실패 시 PaymentAttempt가 FAILED로 기록된다")
+	void confirmPayment_whenTossFails_marksAttemptFailed() {
+		// given
+		BigDecimal amount = BigDecimal.valueOf(50000);
+		String paymentKey = "toss_pk_attempt_fail";
+		String attemptId = "attempt-fail-test-1";
+
+		PendingBooking pendingBooking = createPendingBookingWithHold(amount);
+		PaymentPrepareResult preparedResult = paymentPreparer.prepare(
+			new PaymentPrepareCommand(List.of(pendingBooking.getId())), memberNo);
+
+		given(tossPaymentClient.confirmPayment(any(PaymentConfirmCommand.class)))
+			.willThrow(new TossPaymentException(400, "REJECT_CARD_PAYMENT", "카드 승인 거절"));
+
+		PaymentConfirmCommand confirmRequest = new PaymentConfirmCommand(
+			paymentKey, preparedResult.orderCode(), amount, attemptId);
+
+		// when
+		assertThatThrownBy(() -> paymentConfirmer.confirm(confirmRequest, memberNo))
+			.isInstanceOf(TossPaymentException.class);
+
+		// then - attempt는 REQUIRES_NEW로 저장되므로 outer 롤백과 무관하게 FAILED로 남는다
+		PaymentAttempt attempt = paymentAttemptRepository.findByAttemptId(attemptId).orElseThrow();
+		assertThat(attempt.getStatus()).isEqualTo(PaymentAttemptStatus.FAILED);
+		assertThat(attempt.getErrorCode()).isEqualTo("REJECT_CARD_PAYMENT");
+		assertThat(attempt.getErrorMessage()).isEqualTo("카드 승인 거절");
+		assertThat(attempt.getAttemptType()).isEqualTo(PaymentAttemptType.APPROVAL);
+		assertThat(attempt.getPaymentKey()).isEqualTo(paymentKey);
 	}
 
 	@Test
@@ -401,5 +683,124 @@ class PaymentConfirmServiceTest {
 
 		bookingRedisRepository.savePendingBooking(pendingBooking);
 		return pendingBooking;
+	}
+
+	@ParameterizedTest
+	@EnumSource(value = PaymentStatus.class, names = {"FAILED", "CANCELLED", "REFUNDED"})
+	@DisplayName("승인 불가능한 결제에 새 attemptId로 요청해도 토스 호출 전에 거절한다")
+	void rejects_new_attempt_for_unpayable_payment_before_gateway(PaymentStatus status) {
+		// given
+		BigDecimal amount = BigDecimal.valueOf(50000);
+		PendingBooking pendingBooking = createPendingBookingWithHold(amount);
+		PaymentPrepareResult prepared = paymentPreparer.prepare(
+			new PaymentPrepareCommand(List.of(pendingBooking.getId())), memberNo);
+		Order order = orderRepository.findByOrderCode(prepared.orderCode()).orElseThrow();
+		Payment payment = paymentRepository.findByOrder(order).orElseThrow();
+		payment.updatePaymentKey("previous-key");
+		switch (status) {
+			case FAILED -> payment.fail("REJECT", "카드 거절");
+			case CANCELLED -> payment.cancel("취소");
+			case REFUNDED -> {
+				payment.approve(PaymentMethod.CREDIT_CARD);
+				payment.refund();
+			}
+			default -> throw new AssertionError(status);
+		}
+		paymentRepository.saveAndFlush(payment);
+		given(tossPaymentClient.confirmPayment(any())).willReturn(new TossPaymentConfirmResponse(
+			"new-key", prepared.orderCode(), "카드", amount.longValue(), "DONE"));
+		PaymentConfirmCommand command = new PaymentConfirmCommand("new-key", prepared.orderCode(), amount, "new-attempt");
+
+		// when / then
+		assertThatThrownBy(() -> paymentConfirmer.confirm(command, memberNo))
+			.isInstanceOf(BusinessException.class)
+			.hasFieldOrPropertyWithValue("errorCode", PaymentError.PAYMENT_NOT_APPROVABLE);
+		verify(tossPaymentClient, never()).confirmPayment(any());
+		assertThat(paymentAttemptRepository.findByAttemptId("new-attempt")).isEmpty();
+		assertThat(paymentRepository.findById(payment.getId()).orElseThrow().getPaymentKey()).isEqualTo("previous-key");
+	}
+
+	@ParameterizedTest
+	@ValueSource(booleans = {true, false})
+	@DisplayName("승인 진행 중 재요청은 attemptId가 같거나 달라도 토스를 다시 호출하지 않는다")
+	void concurrent_confirm_calls_gateway_once(boolean sameAttemptId) throws Exception {
+		// given
+		BigDecimal amount = BigDecimal.valueOf(50000);
+		PendingBooking pendingBooking = createPendingBookingWithHold(amount);
+		PaymentPrepareResult prepared = paymentPreparer.prepare(
+			new PaymentPrepareCommand(List.of(pendingBooking.getId())), memberNo);
+		PaymentConfirmCommand firstCommand = new PaymentConfirmCommand("first-key", prepared.orderCode(), amount, "first-id");
+		PaymentConfirmCommand secondCommand = new PaymentConfirmCommand(
+			sameAttemptId ? "first-key" : "second-key", prepared.orderCode(), amount, sameAttemptId ? "first-id" : "second-id");
+		CountDownLatch gatewayEntered = new CountDownLatch(1);
+		CountDownLatch releaseGateway = new CountDownLatch(1);
+		given(tossPaymentClient.confirmPayment(any())).willAnswer(invocation -> {
+			gatewayEntered.countDown();
+			if (!releaseGateway.await(10, TimeUnit.SECONDS)) {
+				throw new AssertionError("승인 응답 대기 시간 초과");
+			}
+			return new TossPaymentConfirmResponse("first-key", prepared.orderCode(), "카드", amount.longValue(), "DONE");
+		});
+
+		try (var executor = Executors.newSingleThreadExecutor()) {
+			var first = executor.submit(() -> paymentConfirmer.confirm(firstCommand, memberNo));
+			try {
+				assertThat(gatewayEntered.await(5, TimeUnit.SECONDS)).isTrue();
+
+				// when / then: 첫 승인의 외부 응답을 기다리는 동안 두 번째 요청을 실행한다.
+				assertThatThrownBy(() -> paymentConfirmer.confirm(secondCommand, memberNo))
+					.isInstanceOf(BusinessException.class)
+					.hasFieldOrPropertyWithValue("errorCode", PaymentError.PAYMENT_ATTEMPT_IN_PROGRESS);
+				Order order = orderRepository.findByOrderCode(prepared.orderCode()).orElseThrow();
+				assertThat(paymentRepository.findByOrder(order).orElseThrow().getPaymentKey()).isEqualTo("first-key");
+			} finally {
+				releaseGateway.countDown();
+			}
+			assertThat(first.get(10, TimeUnit.SECONDS).paymentStatus()).isEqualTo(PaymentStatus.PAID);
+		}
+		verify(tossPaymentClient, times(1)).confirmPayment(any());
+		assertThat(paymentAttemptRepository.findByAttemptId("second-id")).isEmpty();
+	}
+
+	@Test
+	@DisplayName("attemptId 중복이 아닌 DB 무결성 오류는 처리 중 오류로 바꾸지 않는다")
+	void propagates_unrelated_integrity_failure() {
+		// given: 다른 Payment가 이미 사용하는 paymentKey로 승인 시도 저장의 커밋을 실패시킨다.
+		BigDecimal amount = BigDecimal.valueOf(50000);
+		PendingBooking pendingBooking = createPendingBookingWithHold(amount);
+		PaymentPrepareResult prepared = paymentPreparer.prepare(
+			new PaymentPrepareCommand(List.of(pendingBooking.getId())), memberNo);
+		Order otherOrder = orderRepository.save(OrderFixture.create(member));
+		Payment otherPayment = Payment.create(member, otherOrder);
+		otherPayment.updatePaymentKey("duplicate-key");
+		paymentRepository.saveAndFlush(otherPayment);
+		PaymentConfirmCommand command = new PaymentConfirmCommand("duplicate-key", prepared.orderCode(), amount, "new-id");
+
+		// when / then
+		assertThatThrownBy(() -> paymentConfirmer.confirm(command, memberNo))
+			.isInstanceOf(DataIntegrityViolationException.class);
+		verify(tossPaymentClient, never()).confirmPayment(any());
+		assertThat(paymentAttemptRepository.findByAttemptId("new-id")).isEmpty();
+		Order order = orderRepository.findByOrderCode(prepared.orderCode()).orElseThrow();
+		assertThat(paymentRepository.findByOrder(order).orElseThrow().getPaymentKey()).isNull();
+	}
+
+	@Test
+	@DisplayName("64자를 초과한 attemptId는 DB 저장 전에 입력 오류로 거절한다")
+	void rejects_oversized_attempt_id_before_persistence() {
+		// given
+		BigDecimal amount = BigDecimal.valueOf(50000);
+		PendingBooking pendingBooking = createPendingBookingWithHold(amount);
+		PaymentPrepareResult prepared = paymentPreparer.prepare(
+			new PaymentPrepareCommand(List.of(pendingBooking.getId())), memberNo);
+		PaymentConfirmCommand command = new PaymentConfirmCommand("new-key", prepared.orderCode(), amount, "a".repeat(65));
+
+		// when / then
+		assertThatThrownBy(() -> paymentConfirmer.confirm(command, memberNo))
+			.isInstanceOf(BusinessException.class)
+			.hasMessage("결제 시도 ID는 64자 이하여야 합니다.");
+		verify(tossPaymentClient, never()).confirmPayment(any());
+		Order order = orderRepository.findByOrderCode(prepared.orderCode()).orElseThrow();
+		assertThat(paymentRepository.findByOrder(order).orElseThrow().getPaymentKey()).isNull();
 	}
 }

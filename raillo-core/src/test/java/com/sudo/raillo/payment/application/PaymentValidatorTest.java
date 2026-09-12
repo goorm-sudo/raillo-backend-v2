@@ -18,7 +18,7 @@ import com.sudo.raillo.order.infrastructure.OrderRepository;
 import com.sudo.raillo.payment.adapter.persistence.PaymentJpaRepository;
 import com.sudo.raillo.payment.application.required.PaymentGateway;
 import com.sudo.raillo.payment.domain.Payment;
-import com.sudo.raillo.payment.application.PaymentConfirmCommand;
+import com.sudo.raillo.payment.application.command.PaymentConfirmCommand;
 import com.sudo.raillo.payment.domain.PaymentMethod;
 import com.sudo.raillo.payment.domain.exception.PaymentError;
 import com.sudo.raillo.support.annotation.ServiceTest;

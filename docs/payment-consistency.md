@@ -1,12 +1,14 @@
 # Payment Consistency
 
-Toss(외부 결제 API), DB, Redis 세 시스템의 상태 정합성을 보장하기 위한 설계. 승인과 취소 흐름에 동일 구조로 적용한다.
+Toss(외부 결제 API), DB, Redis 세 시스템의 상태 정합성을 보장하기 위한 설계. 승인 흐름부터 적용하고, 취소 흐름은 후속 이슈 #259에서 확장한다.
+
+> `PaymentRecoveryWorker`와 `OutboxWorker`는 다음 브랜치·이슈에서 구현한다. 현재 브랜치는 자동 대사·복구 또는 Redis 정리 재시도를 수행하지 않는다. 아래 목표 아키텍처와 후속 지표는 Worker 도입 이후의 설계다.
 
 ## Why
 
 결제 승인과 취소는 외부 API 호출과 내부 상태 변경(DB, Redis)을 함께 수행하는 유일한 흐름이다. 세 시스템은 한 트랜잭션으로 묶을 수 없으므로 특정 지점에서 실패하면 서로 다른 상태로 남는다.
 
-현재 `PaymentConfirmService.confirm()`은 클래스 레벨 `@Transactional` 안에서 승인 API 호출과 이후 정리 작업을 함께 실행한다. 두 가지 실패 시나리오가 있다.
+개선 전 `PaymentConfirmService.confirm()`은 클래스 레벨 `@Transactional` 안에서 승인 API 호출과 이후 정리 작업을 함께 실행했다. 두 가지 실패 시나리오가 있었다.
 
 ### Scenario 1 — Toss 승인 후 DB 커밋 전 크래시
 
@@ -30,7 +32,7 @@ Toss(외부 결제 API), DB, Redis 세 시스템의 상태 정합성을 보장�
 5. Toss = 승인, DB = 아무 것도 없음 (Scenario 1과 동일)
 ```
 
-현재 `deletePendingBookings`는 `try/catch`로 무음 처리, `releaseSeats`는 catch 없이 트랜잭션에 예외 전파. 이슈 #257에서 지적된 지점.
+`deletePendingBookings`는 `try/catch`로 무음 처리, `releaseSeats`는 catch 없이 트랜잭션에 예외 전파. 이슈 #257에서 지적된 지점. 현재는 정리 전체가 트랜잭션 B 커밋 이후로 이동해 승인 결과를 되돌리지 않는다.
 
 ### 취소 흐름도 대칭
 
@@ -48,7 +50,7 @@ Spring `ApplicationEventPublisher` + `@TransactionalEventListener(phase = AFTER_
 
 이벤트 대신 DB 레코드 두 종류로 대체한다.
 
-## Architecture
+## Architecture — 후속 작업 완료 후 목표
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -91,7 +93,7 @@ Toss 호출 시도와 결과를 기록한다. 승인과 취소를 함께 담는 
 | `next_retry_at` | Recovery 재시도 예약 시각 |
 | `created_at`, `updated_at` | JPA Auditing |
 
-Toss 호출 직전에 `IN_PROGRESS`로 INSERT. 이 row가 있으면 `PaymentRecoveryWorker`가 "Toss는 성공했으나 우리 쪽 상태 전환이 안 된 요청이 있다"는 사실을 인지한다.
+Toss 호출 직전에 `IN_PROGRESS`로 INSERT. 후속 `PaymentRecoveryWorker`는 오래 남은 이 row를 기준으로 Toss 결과와 DB 상태를 대사한다. row의 존재만으로 Toss 승인 성공을 단정하지 않는다.
 
 승인과 취소를 공용으로 다루는 이유는 두 가지다. 컬럼 하나로 대칭 구조를 표현할 수 있고, Recovery Worker 로직도 하나로 통일된다. 승인에만 필요한 컬럼이 늘어난다면 별도 테이블 분리를 재검토한다.
 
@@ -103,7 +105,22 @@ Toss 호출 직전에 `IN_PROGRESS`로 INSERT. 이 row가 있으면 `PaymentReco
 - **클라이언트 Idempotency-Key와의 연결.** 이슈 #260에서 클라이언트가 보내는 `Idempotency-Key` 헤더를 그대로 `attempt_id`에 저장하면 API 계층의 중복 방지와 도메인 계층의 시도 관리가 하나의 키로 이어진다.
 - **관심사 분리.** `payment_key`는 Toss가 발급하는 외부 시스템 키, `attempt_id`는 우리 도메인의 시도 참조 키다. 하나로 뭉치면 PG 교체나 시도 이력 확장 시 스키마 변경 범위가 커진다.
 
-현재 코드에는 명시적 재시도와 Idempotency-Key 헤더가 없어 세 이유 모두 잠재적이다. 컬럼 사후 추가는 마이그레이션 부담이 크므로 처음부터 두고 시작한다.
+현재 승인 API는 요청 body의 `attemptId`를 사용하며, 생략 시 `SHA-256("apv:" + paymentKey)`의
+64자리 16진수 문자열을 사용한다. Idempotency-Key 헤더 연동은 #260 범위다.
+
+#### 승인 재요청과 동시 실행 방어
+
+- 같은 attemptId는 `paymentId`, `paymentKey`, `APPROVAL` 타입까지 일치해야 재사용할 수 있다. 불일치하면 `PAYMENT_114`, 64자를 초과한 입력은 API 검증 또는 애플리케이션의 `PAYMENT_115`로 거절한다.
+- 성공한 시도는 DB에서 승인 결과 DTO를 직접 조회한다. 이미 로딩한 Payment 엔티티를 그대로 반환하지 않으므로, 다른 트랜잭션이 방금 승인한 결과도 반영한다. 최초 응답을 저장·재생하는 방식은 아니며 환불 등 이후 상태 변경도 반영한다.
+- `PaymentAttemptManager.startApprovalInNewTransaction`은 짧은 `REQUIRES_NEW` 트랜잭션에서 Payment 행을 잠그고, 기존 승인 시도와 승인 가능 상태를 확인한 뒤 paymentKey 갱신과 attempt INSERT를 함께 커밋한다. 잠금과 DB 트랜잭션은 Toss 호출 전에 해제한다.
+- 반환값 `PaymentAttemptStartResult.created`가 true인 호출만 승인 API를 실행한다. 동일 시도의 재사용은 false로 반환하며, 다른 attemptId를 보내도 진행 중이거나 실패한 기존 승인을 우회할 수 없다.
+- 실패한 결제를 재시도하려면 새 주문·결제를 준비한다. 기존 Payment가 FAILED/CANCELLED/REFUNDED이면 외부 호출 전에 거절한다.
+- INSERT/커밋 무결성 오류 뒤에는 실제 동일 attempt의 존재와 요청 일치를 확인한다. 다른 제약 위반은 원래 오류로 전파하고 paymentKey와 attempt를 함께 롤백한다.
+- Toss의 4xx 응답은 확정 실패로 분류해 Payment와 attempt를 FAILED로 전환한다. 현재 두 실패 마킹은 각각 커밋되므로, 두 커밋 사이의 장애로 상태가 불일치할 수 있다. 이 간격을 원자적으로 처리하는 보완은 남아 있다. 5xx, 타임아웃, 응답 유실처럼 승인 여부를 단정할 수 없는 오류는 attempt를 IN_PROGRESS로 유지한다. 자동 대사는 후속 Recovery Worker 도입 이후에 수행한다.
+- Toss 성공 후 `PaymentApprovalFinalizer`가 새 트랜잭션에서 Payment를 다시 잠그고 Order/Booking/Payment/Attempt/Outbox를 원자적으로 확정한다. 외부 호출 전에 읽은 엔티티는 확정에 재사용하지 않는다.
+
+후속 Recovery 이슈에서는 새 승인을 시작하지 않고 기존 IN_PROGRESS를 확정해야 한다.
+복구와 승인 확정이 경합하는 경우의 상태 재검증·처리 권한 확보도 해당 이슈에서 검증한다.
 
 ### payment_outbox
 
@@ -122,7 +139,7 @@ DB 커밋 이후 Redis에 반영해야 할 작업을 기록한다. 결제 확정
 
 Payload는 Redis 정리 지점을 특정할 수 있는 최소 정보만 담는다. 예: `pendingBookingIds`, `seatIds`, `trainCarId`, `stopOrders`. 취소는 부분 취소 대비 `cancelledSeatSections[]`까지 포함한다.
 
-### OutboxWorker
+### OutboxWorker — 후속 이슈
 
 애플리케이션 내부 스케줄러로 시작. 다중 인스턴스 동시 실행에 대비해 `SELECT ... FOR UPDATE SKIP LOCKED` 또는 `processing_owner` 임차 방식으로 처리 권한을 확보한다.
 
@@ -130,9 +147,9 @@ Payload는 Redis 정리 지점을 특정할 수 있는 최소 정보만 담는�
 - 실패: `retry_count++`, `next_retry_at = now + backoff` 갱신
 - 최대 재시도 초과: `status=FAILED` 전환, 알람
 
-### PaymentRecoveryWorker
+### PaymentRecoveryWorker — 후속 브랜치·이슈
 
-`IN_PROGRESS` 상태이면서 `updated_at`이 임계값을 넘긴 `payment_attempt`를 조회한다. Toss 결과 조회 API로 실제 상태를 확인한 뒤 다음 중 하나로 확정한다.
+도입 후에는 `IN_PROGRESS` 상태이면서 `updated_at`이 임계값을 넘긴 `payment_attempt`를 조회한다. Toss 결과 조회 API로 실제 상태를 확인한 뒤 다음 중 하나로 확정한다. 현재 브랜치에서는 이 자동 복구가 실행되지 않는다.
 
 | Toss 상태 | 처리 |
 |----------|------|
@@ -143,25 +160,43 @@ Payload는 Redis 정리 지점을 특정할 수 있는 최소 정보만 담는�
 ## Transaction Boundary
 
 ```
+[트랜잭션 A — Toss 호출 전]
+  Payment SELECT FOR UPDATE
+  payment.payment_key 갱신
+  payment_attempt INSERT (IN_PROGRESS)
+  COMMIT
+
 [트랜잭션 밖]
   Toss 호출 (외부 I/O)
 
-[트랜잭션 A — Toss 호출 전]
-  payment_attempt INSERT (IN_PROGRESS)
-
-[트랜잭션 B — 승인 또는 취소 확정]
+[트랜잭션 B — 승인 확정]
+  Payment SELECT FOR UPDATE + 최신 상태 재검증
   Order / Payment / Booking 상태 변경
   payment_attempt.status = SUCCEEDED
   payment_outbox INSERT
+  COMMIT
 
-[트랜잭션 밖 — Worker]
+[트랜잭션 밖 — 임시 인라인, Worker 이관 예정]
   Redis 정리
-  Toss 조회 및 복구
+
+[후속 구현 — Recovery Worker]
+  IN_PROGRESS attempt의 Toss 상태 조회 및 복구
 ```
 
-승인 자체의 원자성(Payment/Order/Booking)은 트랜잭션 B가 보장한다. 실패 회복은 Worker가 담당한다. Redis 정리는 어떤 경로에서도 승인 트랜잭션을 롤백시키지 않는다.
+승인 자체의 원자성(Payment/Order/Booking)은 트랜잭션 B가 보장한다. 현재 Redis 정리는 승인 커밋 이후 실행하므로 승인 트랜잭션을 롤백시키지 않는다. 다만 정리 예외가 API 오류로 전파될 수 있으며, 자동 복구와 정리 재시도는 후속 Worker 작업 범위다.
 
-## Failure Coverage
+`PaymentConfirmService.confirm()`은 자체 트랜잭션을 열지 않고 위 세 단계를 순서대로 연결하기만 한다.
+
+dev·prod·test 모두 `spring.jpa.open-in-view=false`로 설정한다. HTTP 요청 전체에 영속성 컨텍스트를 유지하지 않으므로, 승인 시작 단계에서 조회한 엔티티를 TX B의 영속성 컨텍스트에서 재사용하지 않는다. 이 경계는 상위 호출자도 트랜잭션을 열지 않는 현재 승인 API 경로를 전제로 한다.
+
+| 단계 | 담당 | 트랜잭션 |
+|---|---|---|
+| 승인 시작 | `PaymentApprovalStarter.start` | 조회는 각 컴포넌트의 짧은 트랜잭션, 커밋은 아래 한 곳뿐 |
+| └ 트랜잭션 A |  `PaymentAttemptManager.startApprovalInNewTransaction` | `REQUIRES_NEW` |
+| Toss 승인 요청 | `PaymentGateway.confirm` | 없음 |
+| 트랜잭션 B | `PaymentApprovalFinalizer.finalizeApproval` | `REQUIRED` |
+
+## Failure Coverage — 후속 작업 완료 후 목표
 
 | 실패 지점 | 대응 |
 |----------|------|
@@ -171,7 +206,7 @@ Payload는 Redis 정리 지점을 특정할 수 있는 최소 정보만 담는�
 | Toss 취소 후 DB 커밋 전 크래시 | Recovery Worker가 취소 attempt 확정 |
 | DB 취소 커밋 후 좌석 해제 실패 | outbox 재시도로 좌석 해제 최종 반영 |
 
-## Metrics
+## Metrics — 후속 이슈에서 도입
 
 | Name | Type | Purpose |
 |------|------|---------|
@@ -185,17 +220,30 @@ Payload는 Redis 정리 지점을 특정할 수 있는 최소 정보만 담는�
 
 | 방식 | Scenario 1 | Scenario 2 | 프로세스 크래시 회복 | 관측/재시도 |
 |------|-----------|-----------|-------------------|-----------|
-| 현재 (`@Transactional`에 정리 포함) | 미커버 | 미커버 (롤백 위험) | 불가 | 없음 |
+| 개선 전 (`@Transactional`에 정리 포함) | 미커버 | 미커버 (롤백 위험) | 불가 | 없음 |
 | `AFTER_COMMIT` 이벤트 | 미커버 | 커버 | 불가 (이벤트 유실) | 리스너 로그만 |
-| PaymentAttempt + Outbox | 커버 | 커버 | 가능 | 지표와 재시도 이력 |
+| PaymentAttempt + Outbox + Workers (목표) | 커버 | 커버 | 가능 | 지표와 재시도 이력 |
 
 ## Rollout
 
+### 후속 브랜치·이슈 분리 (2026-09-13)
+
+기존 Tasks 8–12를 하나의 Worker PR로 묶는 계획에서 다음 두 범위로 나눈다. 이 문서의 후속 항목은 현재 브랜치에서 구현하지 않는다.
+
+- **Recovery Worker — 다음 브랜치·이슈:** 네트워크 타임아웃·응답 유실, Toss 성공 후 DB 확정/커밋 실패로 남은 `IN_PROGRESS`를 Toss 조회로 대사한다. 결과가 미확정이면 실패로 단정하거나 승인 API를 재호출하지 않고 다음 폴링까지 유지한다. 처리 권한 확보, 승인 확정과의 경합, 복구 지표 및 복구 후 같은 attemptId 재요청을 검증한다.
+- **Outbox — 별도 새 이슈:** 현재 브랜치에서 완료한 Outbox 엔티티·저장소와 승인 확정 시 INSERT는 유지한다. 미구현인 OutboxWorker의 처리·재시도·최대 시도 초과 정책, Redis 정리 이관 및 관련 지표·통합 테스트를 새 이슈에서 다룬다. 현재 인라인 `cleanupPendingBookings`는 실제 정리를 수행할 수 있는 후속 경로가 준비될 때 이관한다. 기존 계획의 NoOp 처리기를 사용하는 단계가 있다면 `DONE`은 Redis 정리 완료를 보장하지 않는다는 한계를 명시한다.
+
+승인 재요청의 요청 일치 검증, 최신 결과 조회, 결제별 동시 승인 차단, 승인 가능 상태 검증,
+입력 검증과 DB 무결성 오류 구분은 Worker 도입으로 해결되지 않으므로 선행 수정한다.
+
+### 적용 순서
+
 1. 승인 흐름에 `payment_attempt`와 `payment_outbox` 도입 (이슈 #257)
-2. `OutboxWorker`, `PaymentRecoveryWorker` 신설
-3. 취소 흐름에 대칭 적용 (이슈 #259)
-4. 기존 `try/catch` 무음 처리 및 인라인 cleanup 제거
-5. 관측 지표와 알람 추가
+2. 다음 브랜치·이슈에서 `PaymentRecoveryWorker` 신설
+3. 별도 Outbox 이슈에서 기존 저장 구현을 기반으로 `OutboxWorker`와 Redis 정리 처리기 구현
+4. 취소 흐름에 대칭 적용 (이슈 #259)
+5. 실제 Redis 정리 처리기 연결 후 기존 인라인 cleanup 제거
+6. 각 Worker 이슈에서 관측 지표와 알람 추가
 
 ## Future Extensions
 
@@ -207,7 +255,7 @@ Payload는 Redis 정리 지점을 특정할 수 있는 최소 정보만 담는�
 
 ### Toss 웹훅 리스너
 
-Toss는 승인과 취소 결과를 API 응답과 웹훅으로 이중 통지한다. 현재 설계는 API 응답과 폴링만 사용한다. 웹훅을 세 번째 대사 채널로 추가하면 응답 유실 시 회복 지연이 줄어든다. 정합성 자체는 폴링만으로 확보되며 웹훅은 실시간성 개선용이다.
+Toss는 승인과 취소 결과를 API 응답과 웹훅으로 이중 통지한다. 목표 설계는 API 응답과 후속 Recovery Worker의 폴링을 사용한다. 웹훅을 세 번째 대사 채널로 추가하면 응답 유실 시 회복 지연을 줄일 수 있다. 현재 브랜치에는 폴링과 웹훅 대사가 모두 없다.
 
 ### Redis Streams 기반 알림 fan-out
 

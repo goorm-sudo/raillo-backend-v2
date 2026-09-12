@@ -2,6 +2,7 @@ package com.sudo.raillo.payment.application;
 
 import static org.assertj.core.api.Assertions.*;
 
+import com.sudo.raillo.payment.application.command.PaymentPrepareCommand;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;
@@ -23,8 +24,7 @@ import com.sudo.raillo.member.infrastructure.MemberRepository;
 import com.sudo.raillo.order.domain.Order;
 import com.sudo.raillo.order.domain.status.OrderStatus;
 import com.sudo.raillo.order.infrastructure.OrderRepository;
-import com.sudo.raillo.payment.application.PaymentPrepareCommand;
-import com.sudo.raillo.payment.application.PaymentPrepareResult;
+import com.sudo.raillo.payment.application.result.PaymentPrepareResult;
 import com.sudo.raillo.payment.application.provided.PaymentPreparer;
 import com.sudo.raillo.support.annotation.ServiceTest;
 import com.sudo.raillo.support.fixture.MemberFixture;

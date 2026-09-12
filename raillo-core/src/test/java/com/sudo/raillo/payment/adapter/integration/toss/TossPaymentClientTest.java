@@ -23,15 +23,10 @@ import org.springframework.web.client.RestClient;
 
 import tools.jackson.databind.ObjectMapper;
 import com.sudo.raillo.common.exception.BusinessException;
-import com.sudo.raillo.payment.application.PaymentConfirmCommand;
-import com.sudo.raillo.payment.adapter.integration.toss.TossPaymentCancelRequest;
+import com.sudo.raillo.payment.application.command.PaymentConfirmCommand;
 import com.sudo.raillo.payment.domain.exception.PaymentError;
 import com.sudo.raillo.payment.domain.exception.TossPaymentException;
-import com.sudo.raillo.payment.adapter.integration.toss.TossPaymentClient;
 import com.sudo.raillo.payment.adapter.observability.TossApiMetrics;
-import com.sudo.raillo.payment.adapter.integration.toss.TossCancelDetail;
-import com.sudo.raillo.payment.adapter.integration.toss.TossPaymentCancelResponse;
-import com.sudo.raillo.payment.adapter.integration.toss.TossPaymentConfirmResponse;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
