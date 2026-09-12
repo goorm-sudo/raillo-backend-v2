@@ -6,7 +6,7 @@ Toss(외부 결제 API), DB, Redis 세 시스템의 상태 정합성을 보장�
 
 결제 승인과 취소는 외부 API 호출과 내부 상태 변경(DB, Redis)을 함께 수행하는 유일한 흐름이다. 세 시스템은 한 트랜잭션으로 묶을 수 없으므로 특정 지점에서 실패하면 서로 다른 상태로 남는다.
 
-현재 `PaymentConfirmService.confirm()`은 클래스 레벨 `@Transactional` 안에서 승인 API 호출과 이후 정리 작업을 함께 실행한다. 두 가지 실패 시나리오가 있다.
+개선 전 `PaymentConfirmService.confirm()`은 클래스 레벨 `@Transactional` 안에서 승인 API 호출과 이후 정리 작업을 함께 실행했다. 두 가지 실패 시나리오가 있었다.
 
 ### Scenario 1 — Toss 승인 후 DB 커밋 전 크래시
 
@@ -30,7 +30,7 @@ Toss(외부 결제 API), DB, Redis 세 시스템의 상태 정합성을 보장�
 5. Toss = 승인, DB = 아무 것도 없음 (Scenario 1과 동일)
 ```
 
-현재 `deletePendingBookings`는 `try/catch`로 무음 처리, `releaseSeats`는 catch 없이 트랜잭션에 예외 전파. 이슈 #257에서 지적된 지점.
+`deletePendingBookings`는 `try/catch`로 무음 처리, `releaseSeats`는 catch 없이 트랜잭션에 예외 전파. 이슈 #257에서 지적된 지점. 현재는 정리 전체가 트랜잭션 B 커밋 이후로 이동해 승인 결과를 되돌리지 않는다.
 
 ### 취소 흐름도 대칭
 
@@ -108,12 +108,14 @@ Toss 호출 직전에 `IN_PROGRESS`로 INSERT. 이 row가 있으면 `PaymentReco
 
 #### 승인 재요청과 동시 실행 방어
 
-- 같은 attemptId는 `paymentId`, `paymentKey`, `APPROVAL` 타입까지 일치해야 재사용할 수 있다. 불일치하면 `PAYMENT_204`, 64자를 초과한 입력은 API 검증 또는 애플리케이션의 `PAYMENT_205`로 거절한다.
+- 같은 attemptId는 `paymentId`, `paymentKey`, `APPROVAL` 타입까지 일치해야 재사용할 수 있다. 불일치하면 `PAYMENT_114`, 64자를 초과한 입력은 API 검증 또는 애플리케이션의 `PAYMENT_115`로 거절한다.
 - 성공한 시도는 DB에서 승인 결과 DTO를 직접 조회한다. 이미 로딩한 Payment 엔티티를 그대로 반환하지 않으므로, 다른 트랜잭션이 방금 승인한 결과도 반영한다. 최초 응답을 저장·재생하는 방식은 아니며 환불 등 이후 상태 변경도 반영한다.
-- `PaymentAttemptManager.startApprovalInNewTransaction`은 짧은 `REQUIRES_NEW` 트랜잭션에서 Payment 행을 잠그고, 기존 승인 시도와 승인 가능 상태를 확인한 뒤 paymentKey 갱신과 attempt INSERT를 함께 커밋한다. 잠금은 Toss 호출 전에 해제한다.
+- `PaymentAttemptManager.startApprovalInNewTransaction`은 짧은 `REQUIRES_NEW` 트랜잭션에서 Payment 행을 잠그고, 기존 승인 시도와 승인 가능 상태를 확인한 뒤 paymentKey 갱신과 attempt INSERT를 함께 커밋한다. 잠금과 DB 트랜잭션은 Toss 호출 전에 해제한다.
 - 반환값 `PaymentAttemptStartResult.created`가 true인 호출만 승인 API를 실행한다. 동일 시도의 재사용은 false로 반환하며, 다른 attemptId를 보내도 진행 중이거나 실패한 기존 승인을 우회할 수 없다.
 - 실패한 결제를 재시도하려면 새 주문·결제를 준비한다. 기존 Payment가 FAILED/CANCELLED/REFUNDED이면 외부 호출 전에 거절한다.
 - INSERT/커밋 무결성 오류 뒤에는 실제 동일 attempt의 존재와 요청 일치를 확인한다. 다른 제약 위반은 원래 오류로 전파하고 paymentKey와 attempt를 함께 롤백한다.
+- Toss의 4xx 응답은 확정 실패로 분류해 Payment와 attempt를 FAILED로 전환한다. 5xx, 타임아웃, 응답 유실처럼 승인 여부를 단정할 수 없는 오류는 attempt를 IN_PROGRESS로 유지하고 Recovery Worker가 조회한다.
+- Toss 성공 후 `PaymentApprovalFinalizer`가 새 트랜잭션에서 Payment를 다시 잠그고 Order/Booking/Payment/Attempt/Outbox를 원자적으로 확정한다. 외부 호출 전에 읽은 엔티티는 확정에 재사용하지 않는다.
 
 Task 10의 Recovery는 새 승인을 시작하지 않고 기존 IN_PROGRESS를 확정해야 한다.
 복구와 승인 확정이 경합하는 경우의 상태 재검증·처리 권한 확보도 해당 Task에서 검증한다.
@@ -156,23 +158,39 @@ Payload는 Redis 정리 지점을 특정할 수 있는 최소 정보만 담는�
 ## Transaction Boundary
 
 ```
+[트랜잭션 A — Toss 호출 전]
+  Payment SELECT FOR UPDATE
+  payment.payment_key 갱신
+  payment_attempt INSERT (IN_PROGRESS)
+  COMMIT
+
 [트랜잭션 밖]
   Toss 호출 (외부 I/O)
 
-[트랜잭션 A — Toss 호출 전]
-  payment_attempt INSERT (IN_PROGRESS)
-
-[트랜잭션 B — 승인 또는 취소 확정]
+[트랜잭션 B — 승인 확정]
+  Payment SELECT FOR UPDATE + 최신 상태 재검증
   Order / Payment / Booking 상태 변경
   payment_attempt.status = SUCCEEDED
   payment_outbox INSERT
+  COMMIT
 
-[트랜잭션 밖 — Worker]
+[트랜잭션 밖 — 임시 인라인, Worker 이관 예정]
   Redis 정리
-  Toss 조회 및 복구
+
+[트랜잭션 밖 — Recovery Worker]
+  IN_PROGRESS attempt의 Toss 상태 조회 및 복구
 ```
 
 승인 자체의 원자성(Payment/Order/Booking)은 트랜잭션 B가 보장한다. 실패 회복은 Worker가 담당한다. Redis 정리는 어떤 경로에서도 승인 트랜잭션을 롤백시키지 않는다.
+
+`PaymentConfirmService.confirm()`은 자체 트랜잭션을 열지 않고 위 세 단계를 순서대로 연결하기만 한다.
+
+| 단계 | 담당 | 트랜잭션 |
+|---|---|---|
+| 승인 시작 | `PaymentApprovalStarter.start` | 조회는 각 컴포넌트의 짧은 트랜잭션, 커밋은 아래 한 곳뿐 |
+| └ 트랜잭션 A |  `PaymentAttemptManager.startApprovalInNewTransaction` | `REQUIRES_NEW` |
+| Toss 승인 요청 | `PaymentGateway.confirm` | 없음 |
+| 트랜잭션 B | `PaymentApprovalFinalizer.finalizeApproval` | `REQUIRED` |
 
 ## Failure Coverage
 
