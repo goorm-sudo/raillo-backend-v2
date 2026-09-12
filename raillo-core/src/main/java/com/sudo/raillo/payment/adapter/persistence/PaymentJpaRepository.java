@@ -9,7 +9,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import com.sudo.raillo.order.domain.Order;
-import com.sudo.raillo.payment.application.PaymentConfirmResult;
+import com.sudo.raillo.payment.application.result.PaymentConfirmResult;
 import com.sudo.raillo.payment.domain.Payment;
 import com.sudo.raillo.payment.domain.PaymentStatus;
 import jakarta.persistence.LockModeType;
@@ -22,7 +22,7 @@ public interface PaymentJpaRepository extends JpaRepository<Payment, Long> {
 	Optional<Payment> findByIdForUpdate(@Param("paymentId") Long paymentId);
 
 	@Query("""
-		select new com.sudo.raillo.payment.application.PaymentConfirmResult(
+		select new com.sudo.raillo.payment.application.result.PaymentConfirmResult(
 			p.id, p.orderCode, p.paymentKey, p.amount, p.paymentMethod, p.paymentStatus, p.paidAt)
 		from Payment p where p.id = :paymentId
 		""")

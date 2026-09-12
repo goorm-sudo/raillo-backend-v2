@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.BDDMockito.*;
 
+import com.sudo.raillo.payment.application.command.PaymentConfirmCommand;
+import com.sudo.raillo.payment.application.result.PaymentConfirmResult;
 import java.util.Optional;
 
 import org.junit.jupiter.api.BeforeEach;

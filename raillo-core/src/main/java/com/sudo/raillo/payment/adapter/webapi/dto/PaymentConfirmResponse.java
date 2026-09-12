@@ -3,7 +3,7 @@ package com.sudo.raillo.payment.adapter.webapi.dto;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
-import com.sudo.raillo.payment.application.PaymentConfirmResult;
+import com.sudo.raillo.payment.application.result.PaymentConfirmResult;
 import com.sudo.raillo.payment.domain.PaymentMethod;
 import com.sudo.raillo.payment.domain.PaymentStatus;
 

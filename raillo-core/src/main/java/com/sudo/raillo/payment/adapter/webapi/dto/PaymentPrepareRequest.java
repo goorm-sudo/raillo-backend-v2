@@ -2,7 +2,7 @@ package com.sudo.raillo.payment.adapter.webapi.dto;
 
 import java.util.List;
 
-import com.sudo.raillo.payment.application.PaymentPrepareCommand;
+import com.sudo.raillo.payment.application.command.PaymentPrepareCommand;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;

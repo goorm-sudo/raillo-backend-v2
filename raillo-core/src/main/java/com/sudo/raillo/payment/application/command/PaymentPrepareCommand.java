@@ -1,4 +1,4 @@
-package com.sudo.raillo.payment.application;
+package com.sudo.raillo.payment.application.command;
 
 import java.util.List;
 

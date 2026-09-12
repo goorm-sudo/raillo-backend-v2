@@ -3,6 +3,7 @@ package com.sudo.raillo.payment.application;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.sudo.raillo.payment.application.result.PaymentConfirmResult;
 import java.math.BigDecimal;
 
 import org.junit.jupiter.api.BeforeEach;
